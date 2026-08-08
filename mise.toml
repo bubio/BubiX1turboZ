@@ -1,0 +1,13 @@
+# Toolchain pinned for BubiX1turboZ.
+#
+# The Nim compiler version is pinned here rather than in the .nimble file: the
+# .nimble version identifies the application, not the toolchain that builds it.
+# CI reads this same file (jdx/mise-action) so local and CI builds agree.
+#
+# `nim` comes from the community asdf plugin, which mise does not carry in its
+# registry. Install it once with:
+#
+#   mise plugins install nim https://github.com/asdf-community/asdf-nim
+
+[tools]
+nim = "2.2.10"

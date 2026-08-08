@@ -1,0 +1,18 @@
+# Development-only documents and spikes (see CLAUDE.md)
+docs/dev/
+spike/
+
+# Build artifacts
+/build/
+/dist/
+nimcache/
+*.o
+*.a
+*.dylib
+*.so
+*.dSYM/
+*.app/
+*.dmg
+
+# macOS
+.DS_Store
