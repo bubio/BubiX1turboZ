@@ -32,6 +32,12 @@ proc recentFilesPath*(): string =
   ## docs/dev/DevelopmentPlan.md). Tracked separately, one path per line.
   appSupportDir() / "recent.txt"
 
+proc hostConfigPath*(): string =
+  ## Host-side preferences the core's own config_t cannot hold - see
+  ## hostconfig.nim. Kept separate from config.ini so the core stays the
+  ## sole owner of that file's format.
+  appSupportDir() / "host.ini"
+
 proc statesDir*(): string =
   appSupportDir() / "states"
 

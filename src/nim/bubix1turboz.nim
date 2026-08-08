@@ -33,6 +33,7 @@ import bubix1/archive
 import bubix1/ankfont
 import bubix1/nativemenu
 import bubix1/clipboard
+import bubix1/hostconfig
 
 const
   ScreenWidth = 640
@@ -79,6 +80,28 @@ proc main() =
     fail "bx1_create failed (place BIOS ROMs in " & paths.romsDir() & ")"
   var recent = recentfiles.load(paths.recentFilesPath())
   var running = true
+
+  # Host-side view settings. These are not in the core's config_t on this
+  # platform (config.show_status_bar is Win32-only there), so they persist
+  # separately - see hostconfig.nim. Declared up here because the Host menu
+  # is built before the SDL window exists but its actions drive both.
+  var hostCfg = hostconfig.load(paths.hostConfigPath())
+  var showStatusBar = hostCfg.getBool("ShowStatusBar", true)
+  var sdlWin: WindowPtr = nil
+  var renderer: RendererPtr = nil
+
+  proc windowHeight(): cint =
+    (if showStatusBar: WindowHeight else: ScreenHeight).cint
+
+  proc applyWindowLayout() =
+    ## Resizes the window to fit (or drop) the status bar and re-establishes
+    ## the renderer's logical size, which is what makes the picture scale to
+    ## fill a fullscreen window instead of sitting in one corner.
+    if sdlWin == nil:
+      return
+    sdlWin.setSize(ScreenWidth.cint, windowHeight())
+    if renderer != nil:
+      discard renderer.setLogicalSize(ScreenWidth.cint, windowHeight())
 
   # Handles for the parts of the FD0/FD1 menus that change while running.
   # They are filled in after win.show() (there is no menu bar before that),
@@ -210,49 +233,7 @@ proc main() =
       "Multi-platform Sharp X1 turbo Z emulator.\n" &
       "Emulation core: Common Source Code Project's eX1turboZ (GPL-2.0-or-later)."))
 
-  # --- Settings menu ---
-  # Manual "radio button" behavior: each group is a set of check items
-  # where selecting one clears the others. uing/libui-ng has no native
-  # radio-item type.
-  let settingsMenu = newMenu "Settings"
-  var monitorItems: array[2, MenuItem]
-  # Labels and index order match the original Windows app's own
-  # Device > Display menu (confirmed by side-by-side comparison - see
-  # docs/dev/DevelopmentPlan.md phase 5's resolved open item). Index 1
-  # ("Standard") is the one that renders text correctly; index 0 ("High
-  # Resolution") has a pre-existing glyph rendering bug present in the
-  # original app too, not something introduced by this port.
-  let monitorLabels = ["Monitor: High Resolution", "Monitor: Standard"]
-  # Wrapped in a proc, not written directly in the loop body below: a
-  # for-loop-scoped `let idx` is still one shared binding across every
-  # closure created in that loop (confirmed with an isolated repro), so
-  # every item would silently apply whichever index the loop ended on.
-  # A proc parameter gets a fresh binding per call instead.
-  proc makeMonitorAction(idx: int): proc (sender: MenuItem, w: Window) =
-    proc (sender: MenuItem, w: Window) =
-      bx1SetMonitorType(h, idx.cint)
-      for j in 0 ..< 2:
-        monitorItems[j].checked = (j == idx)
-  for i in 0 ..< 2:
-    monitorItems[i] = settingsMenu.addCheckItem(monitorLabels[i], makeMonitorAction(i))
-  settingsMenu.addSeparator()
-  var soundItems: array[3, MenuItem]
-  let soundLabels = ["Sound: PSG Only", "Sound: +1 FM Board (CZ-8BS1)", "Sound: +2 FM Boards (CZ-8BS1)"]
-  proc makeSoundAction(idx: int): proc (sender: MenuItem, w: Window) =
-    proc (sender: MenuItem, w: Window) =
-      bx1SetSoundType(h, idx.cint)
-      for j in 0 ..< 3:
-        soundItems[j].checked = (j == idx)
-  for i in 0 ..< 3:
-    soundItems[i] = settingsMenu.addCheckItem(soundLabels[i], makeSoundAction(i))
-  settingsMenu.addSeparator()
-  let scanlineItem = settingsMenu.addCheckItem("Scanline Effect", proc (sender: MenuItem, w: Window) =
-    # libui-ng check items do not auto-toggle on click - unlike the
-    # monitor/sound radio groups above (which always assign `.checked`
-    # explicitly for every item in the group), a lone toggle has to flip
-    # its own state by hand, or it reads back whatever it was last set to.
-    sender.checked = not sender.checked
-    bx1SetScanLine(h, sender.checked.cint))
+  # Device and Host menus are built natively after win.show(); see below.
 
   win = newWindow("BubiX1turboZ", 320, 80, true)
   win.margined = true
@@ -486,15 +467,156 @@ proc main() =
   menusBuilt = true
   refreshFloppyMenus()
 
-  # Reflect the config loaded by bx1_create (either from config.ini or
-  # built-in defaults) in the initial checkmarks.
-  let curMonitor = bx1GetMonitorType(h)
-  if curMonitor >= 0 and curMonitor < 2:
-    monitorItems[curMonitor].checked = true
-  let curSound = bx1GetSoundType(h)
-  if curSound >= 0 and curSound < 3:
-    soundItems[curSound].checked = true
-  scanlineItem.checked = bx1GetScanLine(h) != 0
+  # --- Device menu ---
+  # Nested exactly like the original's, with two of its submenus left out:
+  # Printer and Serial, whose OSD backends are no-op stubs in this port
+  # (DevelopmentPlan 0.6 group C), so every entry would be inert.
+  #
+  # A small helper covers the four radio groups below. Written as a proc
+  # taking the values it needs rather than inline in each loop, for the
+  # closure-binding reason documented at makeToggleAction above.
+  let deviceMenu = nativemenu.addMenu("Device")
+
+  proc addRadioGroup(menu: nativemenu.Menu, labels: seq[string], values: seq[int],
+                     current: int, apply: proc (value: cint) {.closure.}) =
+    ## Builds a set of items where clicking one checks it and clears the
+    ## rest. `values` are the core's own constants, which are not always a
+    ## dense 0..n range (boot device skips several). seq rather than
+    ## openArray: the per-item closures below capture them, which Nim does
+    ## not allow for an openArray.
+    var group = newSeq[MenuItemRef](labels.len)
+    proc makeAction(idx: int): MenuAction =
+      result = proc () =
+        apply(values[idx].cint)
+        for j in 0 ..< group.len:
+          group[j].checked = (j == idx)
+    for i in 0 ..< labels.len:
+      group[i] = menu.addItem(labels[i], makeAction(i))
+      group[i].checked = (values[i] == current)
+
+  # Boot device. Reaches the guest as DIP switch bits of port 0x1ff0, so it
+  # takes effect on the next reset. The original also lists "HARD DISK"
+  # (value 7); omitted here, since this app has no way to mount one.
+  let bootMenu = deviceMenu.addSubmenu("Boot Device")
+  bootMenu.addRadioGroup(
+    @["5/3-inch 2D", "5/3-inch 2DD", "5/3-inch 2HD", "8-inch 1S"],
+    @[0, 1, 2, 6], bx1GetDriveType(h).int,
+    proc (v: cint) = bx1SetDriveType(h, v))
+
+  let keyboardMenu = deviceMenu.addSubmenu("Keyboard")
+  keyboardMenu.addRadioGroup(
+    @["Keyboard Mode A", "Keyboard Mode B"], @[0, 1], bx1GetKeyboardType(h).int,
+    proc (v: cint) = bx1SetKeyboardType(h, v))
+
+  let soundMenu = deviceMenu.addSubmenu("Sound")
+  soundMenu.addRadioGroup(
+    @["PSG", "CZ-8BS1 x1", "CZ-8BS1 x2"], @[0, 1, 2], bx1GetSoundType(h).int,
+    proc (v: cint) = bx1SetSoundType(h, v))
+  soundMenu.addSeparator()
+  # The four analog/mechanical sources the machine mixes in alongside the
+  # synthesized channels.
+  proc addToggle(menu: nativemenu.Menu, label: string, get: proc (): bool {.closure.},
+                 set: proc (on: cint) {.closure.}) =
+    ## A check item that flips its own state (AppKit does not) and pushes
+    ## the new value into the core.
+    let item = menu.addItem(label)
+    item.checked = get()
+    item.setAction(proc () =
+      item.checked = not item.checked
+      set(item.checked.cint))
+  soundMenu.addToggle("Play FDD Noise",
+    proc (): bool = bx1GetSoundNoiseFdd(h) != 0, proc (on: cint) = bx1SetSoundNoiseFdd(h, on))
+  soundMenu.addToggle("Play CMT Noise",
+    proc (): bool = bx1GetSoundNoiseCmt(h) != 0, proc (on: cint) = bx1SetSoundNoiseCmt(h, on))
+  soundMenu.addToggle("Play CMT Signal",
+    proc (): bool = bx1GetSoundTapeSignal(h) != 0, proc (on: cint) = bx1SetSoundTapeSignal(h, on))
+  soundMenu.addToggle("Play CMT Voice",
+    proc (): bool = bx1GetSoundTapeVoice(h) != 0, proc (on: cint) = bx1SetSoundTapeVoice(h, on))
+
+  let displayMenu = deviceMenu.addSubmenu("Display")
+  # "High Resolution" (0) has a genuine glyph rendering fault that the
+  # original Windows build shows too, so it is not the default here; see
+  # bx1_create and DevelopmentPlan phase 5.
+  displayMenu.addRadioGroup(
+    @["High Resolution", "Standard"], @[0, 1], bx1GetMonitorType(h).int,
+    proc (v: cint) = bx1SetMonitorType(h, v))
+  displayMenu.addSeparator()
+  displayMenu.addToggle("Scanline",
+    proc (): bool = bx1GetScanLine(h) != 0, proc (on: cint) = bx1SetScanLine(h, on))
+
+  # --- Volume window (Host > Volume) ---
+  # The original opens a modal dialog of per-device L/R trackbars
+  # (IDD_VOLUME in x1turboz.rc). Same idea here, as a uing window built
+  # once at startup and shown on demand: repeatedly creating and destroying
+  # uiWindows is exactly the pattern that makes libui-ng's teardown
+  # complain, and one live hidden window costs nothing.
+  let volumeCount = bx1GetSoundVolumeCount().int
+  var volumeL = newSeq[Slider](volumeCount)
+  var volumeR = newSeq[Slider](volumeCount)
+  let volumeWin = newWindow("Volume", 360, 30 * volumeCount + 40, false)
+  volumeWin.margined = true
+  let volumeGrid = newGrid(true)
+  proc makeVolumeChanged(dev: int): proc (sender: Slider) =
+    result = proc (sender: Slider) =
+      bx1SetVolume(h, dev.cint, volumeL[dev].value.cint, volumeR[dev].value.cint)
+  for i in 0 ..< volumeCount:
+    # Device names come from the core's own sound_device_caption table
+    # ("PSG", "CZ-8BS1 #1", "Noise (FDD)", ...), so the labels cannot drift
+    # from the channels they control.
+    volumeGrid.add(newLabel($bx1GetSoundDeviceCaption(i.cint)), 0, i * 2, 1, 2,
+      false, AlignStart, false, AlignCenter)
+    # Range matches the core's own clamp on set_sound_device_volume.
+    volumeL[i] = newSlider(-40 .. 0, makeVolumeChanged(i))
+    volumeR[i] = newSlider(-40 .. 0, makeVolumeChanged(i))
+    volumeL[i].value = bx1GetVolumeL(h, i.cint).int
+    volumeR[i].value = bx1GetVolumeR(h, i.cint).int
+    volumeGrid.add(volumeL[i], 1, i * 2, 1, 1, true, AlignFill, false, AlignCenter)
+    volumeGrid.add(volumeR[i], 1, i * 2 + 1, 1, 1, true, AlignFill, false, AlignCenter)
+  volumeWin.child = volumeGrid
+  volumeWin.onClosing = proc (sender: Window): bool =
+    # Hide rather than destroy, and return false so libui-ng does not
+    # destroy it either - the same rule the main window follows, for the
+    # same reason (uing destroys the window from inside its own
+    # "should close" delegate callback, which crashes).
+    volumeWin.hide()
+    false
+
+  # --- Host menu ---
+  # The original's Host menu is mostly Win32 renderer plumbing (Use
+  # Direct2D1 / Direct3D9 / DirectInput / Disable Windows 8 DWM) plus video
+  # and sound recording, whose OSD backends are stubs here (DevelopmentPlan
+  # 0.6 group B). What is left and genuinely works is kept, with the
+  # original's wording:
+  #
+  # * Screen: the original's window/fullscreen pair. Its stretch and rotate
+  #   variants need scaling modes this port does not implement.
+  # * Volume: the same per-device mixer the original's dialog exposes.
+  # * Show Status Bar.
+  #
+  # Not carried over from the original's Host > Sound submenu: the sample
+  # rate and latency choices. The audio device is opened once at the rate
+  # the core reports and there is no reopen path, so those items would set
+  # a value nothing re-reads.
+  let hostMenu = nativemenu.addMenu("Host")
+  let screenMenu = hostMenu.addSubmenu("Screen")
+  var screenItems: array[2, MenuItemRef]
+  proc applyFullscreen(on: bool) =
+    if sdlWin != nil:
+      discard sdlWin.setFullscreen(if on: SDL_WINDOW_FULLSCREEN_DESKTOP else: 0)
+    for j in 0 ..< 2:
+      screenItems[j].checked = (j == (if on: 1 else: 0))
+  screenItems[0] = screenMenu.addItem("Window x1", proc () = applyFullscreen(false))
+  screenItems[1] = screenMenu.addItem("Fullscreen 640x400", proc () = applyFullscreen(true))
+  screenItems[0].checked = true
+
+  hostMenu.addItem("Volume", proc () = volumeWin.show())
+  hostMenu.addSeparator()
+  let statusBarItem = hostMenu.addItem("Show Status Bar")
+  statusBarItem.checked = showStatusBar
+  statusBarItem.setAction(proc () =
+    statusBarItem.checked = not statusBarItem.checked
+    showStatusBar = statusBarItem.checked
+    applyWindowLayout())
 
   # libui-ng attaches no keyboard shortcuts to any menu item (phase 1.2);
   # wire up the standard macOS ones by hand. Must happen after win.show()
@@ -512,11 +634,11 @@ proc main() =
   # feedback the stretched look reads as distorted on a modern display;
   # this project prioritizes a clean, square-pixel picture over
   # replicating that CRT-accurate aspect ratio.
-  let sdlWin = createWindow("BubiX1turboZ - Screen", SDL_WINDOWPOS_UNDEFINED,
-    SDL_WINDOWPOS_UNDEFINED, ScreenWidth, WindowHeight, SDL_WINDOW_SHOWN)
+  sdlWin = createWindow("BubiX1turboZ - Screen", SDL_WINDOWPOS_UNDEFINED,
+    SDL_WINDOWPOS_UNDEFINED, ScreenWidth.cint, windowHeight(), SDL_WINDOW_SHOWN)
   if sdlWin == nil:
     fail "SDL_CreateWindow failed: " & $getError()
-  let renderer = createRenderer(sdlWin, -1, Renderer_Accelerated)
+  renderer = createRenderer(sdlWin, -1, Renderer_Accelerated)
   if renderer == nil:
     fail "SDL_CreateRenderer failed: " & $getError()
   let texture = renderer.createTexture(SDL_PIXELFORMAT_ARGB8888,
@@ -526,6 +648,10 @@ proc main() =
   # Alpha comes back as 0 from the core (see docs/dev/DevelopmentPlan.md
   # 1.4); blending it would make the whole picture transparent.
   discard texture.setTextureBlendMode(BlendMode_None)
+  # Everything is drawn in 640x(400[+24]) coordinates and SDL scales that
+  # to whatever the window actually is, so fullscreen fills the display
+  # instead of leaving the picture in a corner.
+  discard renderer.setLogicalSize(ScreenWidth.cint, windowHeight())
 
   # Audio: must open at the core's *actual* rate, not a requested one
   # (X1turboZ overrides the "48000Hz" table slot to 62500Hz - see
@@ -682,48 +808,49 @@ proc main() =
       # The original puts it in the window title ("%s - %d fps (%d %%)");
       # here it sits at the right end of the bar instead, where a title
       # bar the user may not be looking at cannot hide it.
-      renderer.setDrawColor(20, 20, 20, 255)
-      var barRect = rect(0.cint, ScreenHeight.cint, ScreenWidth.cint, StatusBarHeight.cint)
-      discard renderer.fillRect(addr barRect)
+      if showStatusBar:
+        renderer.setDrawColor(20, 20, 20, 255)
+        var barRect = rect(0.cint, ScreenHeight.cint, ScreenWidth.cint, StatusBarHeight.cint)
+        discard renderer.fillRect(addr barRect)
 
-      const
-        lampW = 14.cint # the original's indicator bitmaps are 14x12
-        lampH = 12.cint
-        lampY = (ScreenHeight + (StatusBarHeight - lampH.int) div 2).cint
-        textY = (ScreenHeight + (StatusBarHeight - ankfont.GlyphHeight) div 2).cint
-        labelColor = (200'u8, 200'u8, 200'u8)
-        # Three lamp states, matching the original's access_off /
-        # access_on / access_green bitmaps. The third is selected by
-        # floppy_disk_indicator_color(), which the core raises only for a
-        # drive currently configured as 2HD - so a 2D game legitimately
-        # never shows it.
-        lampOff = (60'u8, 60'u8, 60'u8)
-        lampOn = (230'u8, 60'u8, 50'u8)
-        lampOn2 = (60'u8, 220'u8, 70'u8)
-        tapeOn = (230'u8, 160'u8, 30'u8)
+        const
+          lampW = 14.cint # the original's indicator bitmaps are 14x12
+          lampH = 12.cint
+          lampY = (ScreenHeight + (StatusBarHeight - lampH.int) div 2).cint
+          textY = (ScreenHeight + (StatusBarHeight - ankfont.GlyphHeight) div 2).cint
+          labelColor = (200'u8, 200'u8, 200'u8)
+          # Three lamp states, matching the original's access_off /
+          # access_on / access_green bitmaps. The third is selected by
+          # floppy_disk_indicator_color(), which the core raises only for a
+          # drive currently configured as 2HD - so a 2D game legitimately
+          # never shows it.
+          lampOff = (60'u8, 60'u8, 60'u8)
+          lampOn = (230'u8, 60'u8, 50'u8)
+          lampOn2 = (60'u8, 220'u8, 70'u8)
+          tapeOn = (230'u8, 160'u8, 30'u8)
 
-      var x = 6.cint
-      x = font.draw(renderer, x, textY, "FD:", labelColor[0], labelColor[1], labelColor[2])
-      x += 4
-      for drv in 0 ..< 2:
-        let (r, g, b) =
-          if bx1IsFloppyDiskAccessed(h, drv.cint) == 0: lampOff
-          elif bx1FloppyDiskIndicatorColor(h, drv.cint) != 0: lampOn2
-          else: lampOn
-        renderer.setDrawColor(r, g, b, 255)
-        var lampRect = rect(x, lampY, lampW, lampH)
-        discard renderer.fillRect(addr lampRect)
-        x += lampW + 2
-      x += 8
+        var x = 6.cint
+        x = font.draw(renderer, x, textY, "FD:", labelColor[0], labelColor[1], labelColor[2])
+        x += 4
+        for drv in 0 ..< FloppyDrives:
+          let (r, g, b) =
+            if bx1IsFloppyDiskAccessed(h, drv.cint) == 0: lampOff
+            elif bx1FloppyDiskIndicatorColor(h, drv.cint) != 0: lampOn2
+            else: lampOn
+          renderer.setDrawColor(r, g, b, 255)
+          var lampRect = rect(x, lampY, lampW, lampH)
+          discard renderer.fillRect(addr lampRect)
+          x += lampW + 2
+        x += 8
 
-      x = font.draw(renderer, x, textY, "CMT:", labelColor[0], labelColor[1], labelColor[2])
-      x += 4
-      let (tr, tg, tb) = if bx1IsTapeActive(h) != 0: tapeOn else: labelColor
-      font.draw(renderer, x, textY, tapeStatus, tr, tg, tb)
+        x = font.draw(renderer, x, textY, "CMT:", labelColor[0], labelColor[1], labelColor[2])
+        x += 4
+        let (tr, tg, tb) = if bx1IsTapeActive(h) != 0: tapeOn else: labelColor
+        font.draw(renderer, x, textY, tapeStatus, tr, tg, tb)
 
-      let fpsText = $fpsDisplay & " fps"
-      font.draw(renderer, ScreenWidth.cint - font.width(fpsText) - 6, textY, fpsText,
-        labelColor[0], labelColor[1], labelColor[2])
+        let fpsText = $fpsDisplay & " fps"
+        font.draw(renderer, ScreenWidth.cint - font.width(fpsText) - 6, textY, fpsText,
+          labelColor[0], labelColor[1], labelColor[2])
 
       renderer.present()
       inc drawnFrames
@@ -754,6 +881,8 @@ proc main() =
   stderr.writeLine "bubix1turboz: main loop exited, saving and shutting down"
   bx1SaveConfig(h, paths.configFilePath().cstring)
   recentfiles.save(paths.recentFilesPath(), recent)
+  hostCfg.setBool("ShowStatusBar", showStatusBar)
+  hostconfig.save(paths.hostConfigPath(), hostCfg)
 
   closeAudioDevice(audioDev)
   font.destroy()
@@ -761,6 +890,7 @@ proc main() =
   renderer.destroy()
   sdlWin.destroy()
   sdl2.quit()
+  volumeWin.destroy()
   if win != nil:
     win.destroy()
   uing.uninit()
