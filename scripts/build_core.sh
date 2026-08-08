@@ -1,14 +1,12 @@
 #!/bin/bash
-# Trial compile of the vendored C++ core (arm64 / Apple clang).
+# Builds the vendored C++ core (arm64 / Apple clang) into a static library.
 #
-# Compiles only the translation units listed in the original
-# vc++2017/x1turboz.vcxproj, plus the new src/core/sdl and src/core/compat
-# additions. No link step: success means every TU produced an object file.
-# Linking is exercised by scripts/build_core_lib.sh once the OSD is
-# implemented (phase 3).
+# Compiles the translation units listed in the original
+# vc++2017/x1turboz.vcxproj (minus src/win32/*), plus the new
+# src/core/sdl/*.cpp OSD implementation, into build/libbubix1core.a.
 #
 # Usage: ./scripts/build_core.sh [group]
-#   group = vm | app | all (default: all)
+#   group = vm | app | osd | all (default: all)
 
 set -u
 cd "$(dirname "$0")/.."
@@ -16,6 +14,7 @@ cd "$(dirname "$0")/.."
 SRC=src/core
 OBJ=build/core-obj
 LOG=build/core-compile.log
+LIB=build/libbubix1core.a
 
 CXX=clang++
 CXXFLAGS=(
@@ -45,11 +44,16 @@ VM_SRCS=(
 APP_SRCS=(
   common.cpp config.cpp fifo.cpp fileio.cpp emu.cpp debugger.cpp
 )
+OSD_SRCS=(
+  sdl/osd.cpp sdl/osd_screen.cpp sdl/osd_sound.cpp sdl/osd_input.cpp
+  sdl/osd_bitmap.cpp sdl/osd_console.cpp sdl/osd_midi.cpp
+)
 
 case "${1:-all}" in
   vm)  SRCS=("${VM_SRCS[@]}") ;;
   app) SRCS=("${APP_SRCS[@]}") ;;
-  *)   SRCS=("${VM_SRCS[@]}" "${APP_SRCS[@]}") ;;
+  osd) SRCS=("${OSD_SRCS[@]}") ;;
+  *)   SRCS=("${VM_SRCS[@]}" "${APP_SRCS[@]}" "${OSD_SRCS[@]}") ;;
 esac
 
 rm -rf "$OBJ"; mkdir -p "$OBJ"
@@ -73,4 +77,27 @@ if [ $fail -gt 0 ]; then
   printf 'failed: %s\n' "${failed[*]}"
   echo "see $LOG"
   exit 1
+fi
+
+if [ "${1:-all}" = "all" ]; then
+  rm -f "$LIB"
+  ar rcs "$LIB" "$OBJ"/*.o
+  echo "archived $LIB"
+
+  # Real link test (against an empty main) is the actual completion
+  # condition: it is the only reliable way to see whether every OSD::*
+  # symbol emu.cpp/vm/** need is now defined, vs. grepping `nm -u` output
+  # which also lists resolvable libc/libc++ symbols per-object.
+  LINK_TEST_SRC=$(mktemp /tmp/bubix1_link_test.XXXXXX.cpp)
+  LINK_TEST_BIN=$(mktemp /tmp/bubix1_link_test.XXXXXX)
+  echo 'int main() { return 0; }' > "$LINK_TEST_SRC"
+  if clang++ -std=c++17 -arch arm64 "$LINK_TEST_SRC" "$LIB" -o "$LINK_TEST_BIN" 2>"$LOG.link"; then
+    echo "link test passed: no undefined symbols"
+    rm -f "$LINK_TEST_SRC" "$LINK_TEST_BIN" "$LOG.link"
+  else
+    echo "link test FAILED (undefined symbols remain):"
+    cat "$LOG.link"
+    rm -f "$LINK_TEST_SRC" "$LINK_TEST_BIN"
+    exit 1
+  fi
 fi

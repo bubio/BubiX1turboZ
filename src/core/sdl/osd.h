@@ -101,6 +101,21 @@ private:
 	int sound_rate, sound_samples;
 	bool sound_available, sound_muted;
 
+	// Sound ring buffer. update_sound() (driven once per bx1_run_frame call
+	// from the Nim layer) appends here; the bridge drains it via pull_sound().
+	// Guarded by its own mutex, distinct from vm_mutex, since the Nim audio
+	// callback and the emulation thread touch it independently.
+	pthread_mutex_t sound_mutex;
+	int16_t* sound_ring_buffer;
+	int sound_ring_capacity; // in stereo frames
+	int sound_ring_head;     // next frame to read
+	int sound_ring_count;    // frames currently buffered
+
+	// Internal helpers (not part of the original win32 OSD API).
+	void allocate_screen_buffer(bitmap_t *buffer, int width, int height);
+	void release_screen_buffer(bitmap_t *buffer);
+	void key_change(int code, bool pressed, bool repeat);
+
 public:
 	OSD()
 	{
@@ -205,6 +220,18 @@ public:
 	{
 		return vm_window_height_aspect;
 	}
+	// Stride (in pixels) and row count of the buffer get_vm_screen_buffer()
+	// points into. Not part of the original win32 OSD API; added for the
+	// C ABI bridge, which needs the buffer's own dimensions rather than the
+	// host window size.
+	int get_vm_screen_width()
+	{
+		return vm_screen_width;
+	}
+	int get_vm_screen_height()
+	{
+		return vm_screen_height;
+	}
 	scrntype_t* get_vm_screen_buffer(int y);
 	int draw_screen();
 	void capture_screen();
@@ -225,6 +252,16 @@ public:
 	void stop_record_sound();
 	void restart_record_sound();
 	bool now_record_sound;
+
+	// Not part of the original win32 OSD API; added for the C ABI bridge.
+	int get_sound_rate()
+	{
+		return sound_rate;
+	}
+	// Drains up to `frames` stereo frames into dst (interleaved int16 L/R).
+	// Returns the number of frames actually copied (may be less than
+	// requested if the ring buffer has less data available).
+	int pull_sound(int16_t* dst, int frames);
 
 	// common printer
 #ifdef USE_PRINTER
