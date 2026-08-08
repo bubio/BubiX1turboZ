@@ -114,7 +114,11 @@ void bx1_set_mouse(bx1_handle h, int dx, int dy, int buttons);
 
 /// drv: 0-3 (USE_FLOPPY_DISK=4); the Nim UI only needs to expose 0-1 per
 /// BluePrint's "no FDD 3/4" policy, but the bridge does not enforce that.
-/// Returns 1 if the disk is inserted after the call, 0 otherwise.
+/// Returns 1 if `path` is a readable file the request was handed to the
+/// core for, 0 otherwise. Note that the disk is NOT necessarily inserted
+/// by the time this returns: swapping a disk into an occupied drive makes
+/// the core eject first and complete the insert about half a second later,
+/// so poll bx1_is_floppy_disk_inserted() rather than assuming.
 int bx1_open_floppy(bx1_handle h, int drv, const char* path, int bank);
 void bx1_close_floppy(bx1_handle h, int drv);
 /// Number of D88 banks in the currently mounted image (1 if not multi-disk).

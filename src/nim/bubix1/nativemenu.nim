@@ -47,7 +47,9 @@ proc bx1NmenuAddSubmenu(parent: pointer, title: cstring): pointer
   {.importc: "bx1_nmenu_add_submenu", cdecl.}
 proc bx1NmenuAddItem(menu: pointer, title: cstring, tag: cint, key: cstring, mods: cint)
   {.importc: "bx1_nmenu_add_item", cdecl.}
-proc bx1NmenuAddSeparator(menu: pointer) {.importc: "bx1_nmenu_add_separator", cdecl.}
+proc bx1NmenuAddSeparator(menu: pointer, tag: cint)
+  {.importc: "bx1_nmenu_add_separator", cdecl.}
+proc bx1NmenuSetHidden(tag: cint, hidden: cint) {.importc: "bx1_nmenu_set_hidden", cdecl.}
 proc bx1NmenuSetChecked(tag: cint, checked: cint) {.importc: "bx1_nmenu_set_checked", cdecl.}
 proc bx1NmenuGetChecked(tag: cint): cint {.importc: "bx1_nmenu_get_checked", cdecl.}
 proc bx1NmenuSetEnabled(tag: cint, enabled: cint) {.importc: "bx1_nmenu_set_enabled", cdecl.}
@@ -109,9 +111,20 @@ proc setAction*(item: MenuItemRef, action: MenuAction) =
   ## attached to - which does not exist yet while `addItem` is running.
   actions[item.tag] = action
 
-proc addSeparator*(menu: Menu) =
+proc addSeparator*(menu: Menu): MenuItemRef {.discardable.} =
+  ## The returned handle only matters for a separator that has to be hidden
+  ## along with an optional section below it.
+  ensureInstalled()
+  result = MenuItemRef(tag: nextTag)
+  inc nextTag
   if menu.handle != nil:
-    bx1NmenuAddSeparator(menu.handle)
+    bx1NmenuAddSeparator(menu.handle, result.tag)
+
+proc `hidden=`*(item: MenuItemRef, value: bool) =
+  ## Hidden items collapse out of the menu entirely, which is how the
+  ## original app presents its optional sections (the D88 bank list and the
+  ## recent-file entries are simply absent when they do not apply).
+  bx1NmenuSetHidden(item.tag, value.cint)
 
 proc `checked=`*(item: MenuItemRef, value: bool) =
   bx1NmenuSetChecked(item.tag, value.cint)

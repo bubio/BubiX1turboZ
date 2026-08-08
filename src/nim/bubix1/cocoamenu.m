@@ -95,6 +95,32 @@ int bx1_menu_set_enabled(const char *menu_title, const char *item_prefix, int en
 	return 1;
 }
 
+/*
+	Hides a whole top-level menu. Deliberately hides rather than removes:
+	libui-ng's uiprivUninitMenus frees its uiMenu objects by walking
+	[NSApp mainMenu]'s item array, so a menu taken off the bar is never
+	freed and uiUninit then aborts the process with "Some data was leaked"
+	(observed, and consistent with the phase 1.2 note about uiprivUninitAlloc
+	aborting). A hidden item is still in the array, so cleanup still works.
+*/
+int bx1_menu_hide_toplevel(const char *menu_title)
+{
+	NSMenu *bar;
+	NSString *wanted;
+
+	if (NSApp == nil || (bar = [NSApp mainMenu]) == nil) {
+		return 0;
+	}
+	wanted = [NSString stringWithUTF8String:menu_title];
+	for (NSMenuItem *candidate in [bar itemArray]) {
+		if ([[candidate title] isEqualToString:wanted]) {
+			[candidate setHidden:YES];
+			return 1;
+		}
+	}
+	return 0;
+}
+
 void bx1_menu_disable_autoenable_all(void)
 {
 	NSMenu *bar;

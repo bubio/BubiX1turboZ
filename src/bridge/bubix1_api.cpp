@@ -174,8 +174,19 @@ void bx1_set_mouse(bx1_handle h, int dx, int dy, int buttons)
 int bx1_open_floppy(bx1_handle h, int drv, const char* path, int bank)
 {
 	EMU* emu = emu_of(h);
+	if(path == NULL || !FILEIO::IsFileExisting(path)) {
+		return 0;
+	}
 	emu->open_floppy_disk(drv, path, bank);
-	return emu->is_floppy_disk_inserted(drv) ? 1 : 0;
+	// Not is_floppy_disk_inserted(): when the drive already holds a disk,
+	// EMU::open_floppy_disk ejects it and defers the insert by half a
+	// second of emulated time (floppy_disk_status[drv].wait_count, applied
+	// later by update_media) so the guest sees a real disk change. Reading
+	// the inserted flag here would therefore report failure for every swap,
+	// including picking a different bank of the same D88. wait_count is
+	// private to EMU, so success is reported for a readable file instead -
+	// which is what a caller actually needs to know.
+	return 1;
 }
 
 void bx1_close_floppy(bx1_handle h, int drv)

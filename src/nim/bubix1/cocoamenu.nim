@@ -17,6 +17,15 @@ proc bx1MenuSetTitleImpl(menuTitle, itemPrefix, newTitle: cstring): cint
 proc bx1MenuSetEnabledImpl(menuTitle, itemPrefix: cstring, enabled: cint): cint
   {.importc: "bx1_menu_set_enabled", cdecl.}
 proc bx1MenuDisableAutoenableAllImpl() {.importc: "bx1_menu_disable_autoenable_all", cdecl.}
+proc bx1MenuHideToplevelImpl(menuTitle: cstring): cint
+  {.importc: "bx1_menu_hide_toplevel", cdecl.}
+
+proc hideTopLevelMenu*(menuTitle: string): bool {.discardable.} =
+  ## Hides a whole top-level menu. Needed because libui-ng only exposes
+  ## About/Quit through a `Menu` object, and it relocates those two items
+  ## into the application menu itself - leaving behind an empty top-level
+  ## menu. It must be hidden rather than removed; see cocoamenu.m.
+  bx1MenuHideToplevelImpl(menuTitle.cstring) != 0
 
 proc titleArg(menuTitle: string): cstring =
   if menuTitle.len == 0: nil else: menuTitle.cstring

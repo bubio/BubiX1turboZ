@@ -146,12 +146,22 @@ void bx1_nmenu_add_item(void *menu, const char *title, int tag, const char *key,
 	[items_by_tag setObject:item forKey:[NSNumber numberWithInt:tag]];
 }
 
-void bx1_nmenu_add_separator(void *menu)
+// Registered under a tag like any other item so it can be hidden, which
+// matters for a separator that only makes sense when the optional section
+// below it is showing.
+void bx1_nmenu_add_separator(void *menu, int tag)
 {
+	NSMenuItem *item;
+
+	ensure_globals();
 	if (menu == NULL) {
 		return;
 	}
-	[(NSMenu *)menu addItem:[NSMenuItem separatorItem]];
+	item = [NSMenuItem separatorItem];
+	[(NSMenu *)menu addItem:item];
+	if (tag != 0) {
+		[items_by_tag setObject:item forKey:[NSNumber numberWithInt:tag]];
+	}
 }
 
 static NSMenuItem *item_for_tag(int tag)
@@ -176,6 +186,16 @@ int bx1_nmenu_get_checked(int tag)
 void bx1_nmenu_set_enabled(int tag, int enabled)
 {
 	[item_for_tag(tag) setEnabled:(enabled != 0)];
+}
+
+// Hiding rather than disabling is how the original renders its optional
+// sections: the D88 bank list and the recent-file entries simply are not
+// there when they do not apply (winmain.cpp rebuilds the menu tail each
+// time). AppKit collapses hidden items out of the layout, giving the same
+// result without rebuilding anything.
+void bx1_nmenu_set_hidden(int tag, int hidden)
+{
+	[item_for_tag(tag) setHidden:(hidden != 0)];
 }
 
 void bx1_nmenu_set_item_title(int tag, const char *title)

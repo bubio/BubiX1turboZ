@@ -47,6 +47,11 @@ const
   WindowHeight = ScreenHeight + StatusBarHeight
   RecentSlots = 8 # matches MAX_HISTORY in src/core/config.h
   DiskSlots = 16 # fixed slots for the D88 multi-bank picker (phase 7)
+  # The core is built with USE_FLOPPY_DISK=4, but BluePrint calls for two
+  # drives in the UI (commercial X1 titles never needed more). Reducing the
+  # feature here rather than in the core is the standing policy - see
+  # docs/dev/DevelopmentPlan.md 0.5.
+  FloppyDrives = 2
   # .nimble is the single source of truth for the app version; the build
   # script reads it and passes it in via -d so it isn't hardcoded twice.
   # The fallback only matters for ad-hoc `nim c` runs outside the script.
@@ -75,40 +80,79 @@ proc main() =
   var recent = recentfiles.load(paths.recentFilesPath())
   var running = true
 
+  # Handles for the parts of the FD0/FD1 menus that change while running.
+  # They are filled in after win.show() (there is no menu bar before that),
+  # so the helpers below are written to be safe when called earlier, during
+  # the pre-menu part of startup.
+  var recentItems: array[FloppyDrives, array[RecentSlots, MenuItemRef]]
+  var recentNoneItems: array[FloppyDrives, MenuItemRef]
+  var bankPathItems: array[FloppyDrives, MenuItemRef]
+  var bankItems: array[FloppyDrives, array[DiskSlots, MenuItemRef]]
+  var bankSepItems: array[FloppyDrives, MenuItemRef]
+  var writeProtectItems: array[FloppyDrives, MenuItemRef]
+  var menusBuilt = false
+
+  # What each drive currently holds. The path is kept so the bank picker
+  # can re-issue bx1OpenFloppy with a different bank index, and the bank
+  # index so the picker can show which one is active - the core exposes no
+  # getter for its own cur_bank.
+  var drivePath: array[FloppyDrives, string]
+  var driveBank: array[FloppyDrives, int]
+
+  proc refreshFloppyMenu(drv: int) =
+    ## Brings one FD menu's variable parts back in line with the machine:
+    ## the D88 bank list, the write-protect state, and the recent files.
+    ## Mirrors the original's update_floppy_disk_menu (winmain.cpp), which
+    ## rebuilds the same tail of the same menu on every open.
+    if not menusBuilt:
+      return
+    let bankCount = bx1GetFloppyBankCount(h, drv.cint)
+    # The original only shows the bank list for an image that actually has
+    # more than one disk in it; a plain single-disk D88 gets no section.
+    let multiBank = bankCount > 1
+    bankPathItems[drv].hidden = not multiBank
+    if multiBank:
+      bankPathItems[drv].title = drivePath[drv].extractFilename()
+    bankSepItems[drv].hidden = not multiBank
+    for i in 0 ..< DiskSlots:
+      let show = multiBank and i < bankCount
+      bankItems[drv][i].hidden = not show
+      if show:
+        bankItems[drv][i].title = &"{i+1}: " & $bx1GetFloppyBankName(h, drv.cint, i.cint)
+        bankItems[drv][i].checked = (driveBank[drv] == i)
+
+    let inserted = bx1IsFloppyDiskInserted(h, drv.cint) != 0
+    writeProtectItems[drv].enabled = inserted
+    writeProtectItems[drv].checked = inserted and bx1GetFloppyWriteProtected(h, drv.cint) != 0
+
+    for i in 0 ..< RecentSlots:
+      let show = i < recent.len
+      recentItems[drv][i].hidden = not show
+      if show:
+        recentItems[drv][i].title = recent[i].extractFilename()
+    recentNoneItems[drv].hidden = recent.len > 0
+
+  proc refreshFloppyMenus() =
+    for drv in 0 ..< FloppyDrives:
+      refreshFloppyMenu(drv)
+
   proc rememberRecent(path: string) =
     recent = recentfiles.pushFront(recent, path)
-    for i in 0 ..< RecentSlots:
-      let label = if i < recent.len: &"{i+1}. {recent[i].extractFilename()}" else: &"{i+1}. (empty)"
-      discard cocoamenu.setMenuItemTitle("File", &"{i+1}. ", label)
-
-  # Drive 1's currently-mounted D88 path, kept so the Disk menu (bank
-  # picker below) can re-issue bx1OpenFloppy with a different bank index
-  # without the caller having to remember the path itself. Only drive 1
-  # is exposed here: commercial multi-scenario D88s are conventionally
-  # the main game disk, which goes in drive 1, while drive 2 (if used at
-  # all) is a plain single-image save/data disk.
-  var driveOnePath = ""
-
-  proc updateDiskMenu() =
-    let count = bx1GetFloppyBankCount(h, 0)
-    for i in 0 ..< DiskSlots:
-      let show = i < count
-      let label = if show: &"{i+1}. " & $bx1GetFloppyBankName(h, 0, i.cint) else: &"{i+1}. (unused)"
-      discard cocoamenu.setMenuItemTitle("Disk", &"{i+1}. ", label)
-      discard cocoamenu.setMenuItemEnabled("Disk", &"{i+1}. ", show)
+    refreshFloppyMenus()
 
   proc mountFloppy(drv: int, path: string, bank: int): bool =
     result = bx1OpenFloppy(h, drv.cint, path.cstring, bank.cint) != 0
-    if result and drv == 0:
-      driveOnePath = path
-      updateDiskMenu()
+    if result:
+      drivePath[drv] = path
+      driveBank[drv] = bank
+    refreshFloppyMenu(drv)
 
-  proc openFloppyAt(parent: Window, drv: int) =
-    let path = uing.openFile(parent)
-    if path.len > 0 and mountFloppy(drv, path, 0):
-      rememberRecent(path)
+  proc ejectFloppy(drv: int) =
+    bx1CloseFloppy(h, drv.cint)
+    driveBank[drv] = -1
+    refreshFloppyMenu(drv)
 
-  proc loadMedia(path: string) =
+  proc loadMedia(path: string, startDrive = 0) =
     ## Single entry point for anything that can end up mounted: a bare
     ## image, a 7z/zip archive, or an m3u/m3u8 playlist. Used by drag &
     ## drop, Recent Files, and the "Open Disk or Archive..." menu item, so
@@ -120,7 +164,10 @@ proc main() =
     except IOError as e:
       stderr.writeLine "bubix1turboz: " & e.msg
       return
-    var drv = 0
+    # A multi-disk set fills consecutive drives starting from the one the
+    # user asked for, so picking a playlist from FD1's menu loads disk 1
+    # into FD1 rather than always into FD0.
+    var drv = startDrive
     var mounted = false
     for p in resolved:
       case archive.classify(p)
@@ -128,7 +175,7 @@ proc main() =
         if bx1OpenTape(h, p.cstring, 1) != 0:
           mounted = true
       of archive.mkFloppy:
-        if drv < 2 and mountFloppy(drv, p, 0):
+        if drv < FloppyDrives and mountFloppy(drv, p, 0):
           mounted = true
           inc drv
       of archive.mkArchive, archive.mkPlaylist, archive.mkUnknown:
@@ -142,82 +189,26 @@ proc main() =
 
   var win: Window
 
-  # --- File menu ---
-  let fileMenu = newMenu "File"
-  fileMenu.addItem("Open Floppy 1...", proc (sender: MenuItem, w: Window) =
-    openFloppyAt(w, 0))
-  fileMenu.addItem("Open Floppy 2...", proc (sender: MenuItem, w: Window) =
-    openFloppyAt(w, 1))
-  fileMenu.addItem("Eject Floppy 1", proc (sender: MenuItem, w: Window) =
-    bx1CloseFloppy(h, 0))
-  fileMenu.addItem("Eject Floppy 2", proc (sender: MenuItem, w: Window) =
-    bx1CloseFloppy(h, 1))
-  fileMenu.addSeparator()
-  fileMenu.addItem("Open Tape...", proc (sender: MenuItem, w: Window) =
-    let path = uing.openFile(w)
-    if path.len > 0:
-      if bx1OpenTape(h, path.cstring, 1) != 0:
-        rememberRecent(path))
-  fileMenu.addItem("Eject Tape", proc (sender: MenuItem, w: Window) =
-    bx1CloseTape(h))
-  fileMenu.addSeparator()
-  fileMenu.addItem("Open Disk or Archive...", proc (sender: MenuItem, w: Window) =
-    let path = uing.openFile(w)
-    if path.len > 0:
-      loadMedia(path))
-  fileMenu.addSeparator()
-  # Fixed slots (not a real submenu - uing/libui-ng menus cannot nest).
-  # Titles are rewritten in place via cocoamenu.setMenuItemTitle as the
-  # recent list changes; "N. " is the stable prefix used to find them.
-  # The action is built by a proc, not written inline in the loop body:
-  # a for-loop-scoped `let idx` is one shared binding across every
-  # closure created in that loop, so every slot's callback would silently
-  # fire with whichever index the loop last reached (confirmed with an
-  # isolated repro - every slot opened the same file regardless of which
-  # one was clicked). A proc parameter gets a fresh binding per call.
-  proc makeRecentAction(idx: int): proc (sender: MenuItem, w: Window) =
-    proc (sender: MenuItem, w: Window) =
-      if idx < recent.len:
-        loadMedia(recent[idx])
-  for i in 0 ..< RecentSlots:
-    let label = if i < recent.len: &"{i+1}. {recent[i].extractFilename()}" else: &"{i+1}. (empty)"
-    fileMenu.addItem(label, makeRecentAction(i))
-  fileMenu.addSeparator()
-  fileMenu.addQuitItem(proc (): bool =
+  # The only uing Menu left. libui-ng exposes About and Quit exclusively
+  # through its Menu API and relocates both into the macOS application
+  # menu itself, so one has to exist - but the empty top-level menu it
+  # leaves behind on the bar is swept away after win.show() (see
+  # cocoamenu.removeTopLevelMenu below). Everything else is built with
+  # nativemenu, which can nest.
+  let appMenuHost = newMenu "File"
+  appMenuHost.addQuitItem(proc (): bool =
     running = false
     if win != nil:
       win.destroy()
       win = nil
     true)
-  # libui-ng places this in the application menu (About BubiX1turboZ)
-  # regardless of which Menu it is added to - like addQuitItem above.
   # Without an explicit addAboutItem call, libui-ng still shows the
   # placeholder item but wires no action to it, which Cocoa then reports
   # as permanently disabled (no target-action pair to validate).
-  fileMenu.addAboutItem(proc (sender: MenuItem, w: Window) =
+  appMenuHost.addAboutItem(proc (sender: MenuItem, w: Window) =
     uing.msgBox(w, "BubiX1turboZ " & appVersion,
       "Multi-platform Sharp X1 turbo Z emulator.\n" &
       "Emulation core: Common Source Code Project's eX1turboZ (GPL-2.0-or-later)."))
-
-  # --- Disk menu (D88 multi-bank picker for drive 1) ---
-  # libui-ng cannot add/remove menu items at runtime (phase 6), and the
-  # bank count is only known after an image is mounted (the core reads it
-  # from the file), so this preallocates fixed slots exactly like Recent
-  # Files above and starts them all disabled; updateDiskMenu() renames
-  # and enables/disables them once drive 1 actually holds a multi-bank
-  # image.
-  let diskMenu = newMenu "Disk"
-  proc makeDiskBankAction(idx: int): proc (sender: MenuItem, w: Window) =
-    # A plain `for`-loop-scoped closure would have every slot's callback
-    # share the *same* `idx` binding (all firing with the loop's final
-    # value - confirmed with an isolated repro while tracking down why
-    # every slot picked the same bank). Wrapping it in a proc call forces
-    # a fresh binding per slot, since `idx` is now a parameter.
-    proc (sender: MenuItem, w: Window) =
-      if driveOnePath.len > 0:
-        discard mountFloppy(0, driveOnePath, idx)
-  for i in 0 ..< DiskSlots:
-    diskMenu.addItem(&"{i+1}. (unused)", makeDiskBankAction(i))
 
   # --- Settings menu ---
   # Manual "radio button" behavior: each group is a set of check items
@@ -298,6 +289,11 @@ proc main() =
   # before that.
   cocoamenu.disableAutoEnableAll()
 
+  # libui-ng put About and Quit into the application menu itself, leaving
+  # the Menu they were declared on as an empty top-level entry. Hide it -
+  # removing it makes libui's own cleanup miss it and abort at exit.
+  cocoamenu.hideTopLevelMenu("File")
+
   # --- Control menu (built natively; see nativemenu.nim) ---
   # Item order, wording and grouping follow the original eX1turboZ's own
   # Control menu (src/res/x1turboz.rc), minus what this port does not have:
@@ -376,6 +372,120 @@ proc main() =
     bx1SetRomajiToKana(h, romajiItem.checked.cint))
   syncCpuItems()
 
+  # --- FD0 / FD1 menus ---
+  # One menu per drive, wording and order taken from the original's FD0
+  # menu (src/res/x1turboz.rc) plus the tail its update_floppy_disk_menu
+  # builds at runtime: the D88 bank list for a multi-disk image, then the
+  # recent files. Only two drives, per BluePrint; the original's FD2/FD3
+  # and all four HD menus are not built.
+  proc makeInsertAction(drv: int): MenuAction =
+    result = proc () =
+      let path = uing.openFile(win)
+      if path.len > 0 and mountFloppy(drv, path, 0):
+        rememberRecent(path)
+  proc makeMediaAction(drv: int): MenuAction =
+    result = proc () =
+      let path = uing.openFile(win)
+      if path.len > 0:
+        loadMedia(path, drv)
+  proc makeEjectAction(drv: int): MenuAction =
+    result = proc () = ejectFloppy(drv)
+  proc makeBlankAction(drv, mediaType: int): MenuAction =
+    result = proc () =
+      let path = uing.saveFile(win)
+      if path.len > 0 and bx1CreateBlankFloppyDisk(h, path.cstring, mediaType.cint) != 0:
+        discard mountFloppy(drv, path, 0)
+  proc makeBankAction(drv, bank: int): MenuAction =
+    result = proc () =
+      if drivePath[drv].len > 0:
+        discard mountFloppy(drv, drivePath[drv], bank)
+  proc makeRecentAction(drv, idx: int): MenuAction =
+    result = proc () =
+      if idx < recent.len:
+        loadMedia(recent[idx], drv)
+  proc makeToggleAction(item: MenuItemRef, drv: int,
+                        setter: proc (h: Bx1Handle, drv, enabled: cint) {.cdecl.}): MenuAction =
+    ## A per-drive check item that flips its own state (AppKit does not do
+    ## that for a target/action item) and pushes the new value to the core.
+    result = proc () =
+      item.checked = not item.checked
+      setter(h, drv.cint, item.checked.cint)
+
+  for drv in 0 ..< FloppyDrives:
+    let fd = nativemenu.addMenu("FD" & $drv)
+    fd.addItem("Insert", makeInsertAction(drv))
+    # Not in the original: this port also accepts 7z/zip archives and
+    # m3u/m3u8 playlists (BluePrint), which need their own entry point
+    # since the plain Insert above mounts a single image as-is.
+    fd.addItem("Insert Archive or Playlist", makeMediaAction(drv))
+    fd.addItem("Eject", makeEjectAction(drv))
+    fd.addItem("Insert Blank 2D Disk", makeBlankAction(drv, 0))
+    fd.addItem("Insert Blank 2DD Disk", makeBlankAction(drv, 1))
+    fd.addItem("Insert Blank 2HD Disk", makeBlankAction(drv, 2))
+    fd.addSeparator()
+    writeProtectItems[drv] = fd.addItem("Write Protected")
+    let correctTiming = fd.addItem("Correct Timing")
+    let ignoreCrc = fd.addItem("Ignore CRC Errors")
+    # Self-toggling check items: their closures refer to the item itself,
+    # which does not exist while addItem is running, so the action is
+    # attached afterwards - and it has to be built by a proc call rather
+    # than written inline here. A `let` scoped to this for-loop body is a
+    # single binding shared by every closure the loop creates, so written
+    # inline, FD0's toggle would silently drive FD1's item (observed: the
+    # checkmark never appeared on FD0 because the click was flipping FD1).
+    # This is the same trap DevelopmentPlan phase 7 records; proc
+    # parameters get a fresh binding per call.
+    writeProtectItems[drv].setAction(
+      makeToggleAction(writeProtectItems[drv], drv, bx1SetFloppyWriteProtected))
+    correctTiming.checked = bx1GetCorrectDiskTiming(h, drv.cint) != 0
+    correctTiming.setAction(makeToggleAction(correctTiming, drv, bx1SetCorrectDiskTiming))
+    ignoreCrc.checked = bx1GetIgnoreDiskCrc(h, drv.cint) != 0
+    ignoreCrc.setAction(makeToggleAction(ignoreCrc, drv, bx1SetIgnoreDiskCrc))
+    fd.addSeparator()
+    # D88 bank picker. Hidden entirely unless the mounted image holds more
+    # than one disk, exactly like the original.
+    bankPathItems[drv] = fd.addItem("")
+    bankPathItems[drv].enabled = false # a caption, not an action
+    for i in 0 ..< DiskSlots:
+      bankItems[drv][i] = fd.addItem("", makeBankAction(drv, i))
+    bankSepItems[drv] = fd.addSeparator()
+    # Recent files. The original keeps a separate list per drive; this port
+    # keeps one shared list (its own recent.txt, which also remembers
+    # archives and playlists), and clicking an entry mounts it into
+    # whichever drive's menu it was picked from.
+    for i in 0 ..< RecentSlots:
+      recentItems[drv][i] = fd.addItem("", makeRecentAction(drv, i))
+    recentNoneItems[drv] = fd.addItem("None")
+    recentNoneItems[drv].enabled = false
+
+  # --- CMT menu ---
+  let cmtMenu = nativemenu.addMenu("CMT")
+  cmtMenu.addItem("Play", proc () =
+    let path = uing.openFile(win)
+    if path.len > 0 and bx1OpenTape(h, path.cstring, 1) != 0:
+      rememberRecent(path))
+  cmtMenu.addItem("Rec", proc () =
+    let path = uing.saveFile(win)
+    if path.len > 0:
+      discard bx1OpenTape(h, path.cstring, 0))
+  cmtMenu.addItem("Eject", proc () = bx1CloseTape(h))
+  cmtMenu.addSeparator()
+  cmtMenu.addItem("Play Button", proc () = bx1TapePushPlay(h))
+  cmtMenu.addItem("Stop Button", proc () = bx1TapePushStop(h))
+  cmtMenu.addItem("Fast Forward", proc () = bx1TapePushFastForward(h))
+  cmtMenu.addItem("Fast Rewind", proc () = bx1TapePushFastRewind(h))
+  cmtMenu.addItem("APSS Forward", proc () = bx1TapePushApssForward(h))
+  cmtMenu.addItem("APSS Rewind", proc () = bx1TapePushApssRewind(h))
+  cmtMenu.addSeparator()
+  let waveShaperItem = cmtMenu.addItem("Waveform Shaper")
+  waveShaperItem.checked = bx1GetWaveShaper(h) != 0
+  waveShaperItem.setAction(proc () =
+    waveShaperItem.checked = not waveShaperItem.checked
+    bx1SetWaveShaper(h, waveShaperItem.checked.cint))
+
+  menusBuilt = true
+  refreshFloppyMenus()
+
   # Reflect the config loaded by bx1_create (either from config.ini or
   # built-in defaults) in the initial checkmarks.
   let curMonitor = bx1GetMonitorType(h)
@@ -385,7 +495,6 @@ proc main() =
   if curSound >= 0 and curSound < 3:
     soundItems[curSound].checked = true
   scanlineItem.checked = bx1GetScanLine(h) != 0
-  updateDiskMenu() # disables all slots; nothing is mounted yet
 
   # libui-ng attaches no keyboard shortcuts to any menu item (phase 1.2);
   # wire up the standard macOS ones by hand. Must happen after win.show()
@@ -627,6 +736,12 @@ proc main() =
     let nowTicks = getTicks()
     if nowTicks - lastStatusTicks >= StatusPollMs:
       tapeStatus = $bx1GetTapeMessage(h)
+      # The FD menus are refreshed on the same timer because a disk change
+      # does not take effect immediately: swapping into an occupied drive
+      # makes the core eject and finish the insert about half a second
+      # later, so anything derived from "is a disk inserted" (the Write
+      # Protected item) would otherwise stay stale until the next click.
+      refreshFloppyMenus()
       lastStatusTicks = nowTicks
     if nowTicks - lastFpsTicks >= 1000:
       # Drawn frames per second, which is what the original's counter
