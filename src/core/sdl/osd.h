@@ -262,6 +262,11 @@ public:
 	// Returns the number of frames actually copied (may be less than
 	// requested if the ring buffer has less data available).
 	int pull_sound(int16_t* dst, int frames);
+	// Frames currently sitting in the ring buffer. The host uses this as
+	// the audio-clock pacing signal (see docs/dev/DevelopmentPlan.md,
+	// "frame sync is audio-clock driven"): keep calling bx1_run_frame
+	// while this stays below the desired latency.
+	int get_buffered_sound_frames();
 
 	// common printer
 #ifdef USE_PRINTER

@@ -29,6 +29,8 @@ proc bx1GetActualSoundRate*(h: Bx1Handle): cint
   {.importc: "bx1_get_actual_sound_rate", bx1.}
 proc bx1PullAudio*(h: Bx1Handle, dst: ptr int16, frames: cint): cint
   {.importc: "bx1_pull_audio", bx1.}
+proc bx1GetBufferedAudioFrames*(h: Bx1Handle): cint
+  {.importc: "bx1_get_buffered_audio_frames", bx1.}
 proc bx1MuteSound*(h: Bx1Handle) {.importc: "bx1_mute_sound", bx1.}
 
 proc bx1KeyDown*(h: Bx1Handle, vkCode: cint, repeat: cint)

@@ -18,7 +18,15 @@
 
 void OSD::initialize(int rate, int samples)
 {
-	pthread_mutex_init(&vm_mutex, NULL);
+	// Recursive: EMU::run() itself calls lock_vm()/unlock_vm() around
+	// vm->run() (emu.cpp), so a caller that holds the lock across a call
+	// into the core (e.g. bx1_lock() around bx1_run_frame()) would
+	// self-deadlock on a default (non-recursive) mutex.
+	pthread_mutexattr_t attr;
+	pthread_mutexattr_init(&attr);
+	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+	pthread_mutex_init(&vm_mutex, &attr);
+	pthread_mutexattr_destroy(&attr);
 	lock_count = 0;
 
 	// input
@@ -110,11 +118,14 @@ void OSD::unlock_vm()
 
 void OSD::force_unlock_vm()
 {
-	// Drop any lock this thread may still hold after an error. lock_count is
-	// only ever incremented/decremented under vm_mutex by lock_vm/unlock_vm,
-	// so this is best-effort recovery, matching win32's semantics.
-	lock_count = 0;
-	pthread_mutex_unlock(&vm_mutex);
+	// Drop every level of recursion this thread may still hold after an
+	// error. lock_count is only ever incremented/decremented under
+	// vm_mutex by lock_vm/unlock_vm, so this is best-effort recovery,
+	// matching win32's semantics.
+	while(lock_count > 0) {
+		lock_count--;
+		pthread_mutex_unlock(&vm_mutex);
+	}
 }
 
 void OSD::sleep(uint32_t ms)

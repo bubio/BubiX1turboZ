@@ -92,6 +92,11 @@ int bx1_pull_audio(bx1_handle h, int16_t* dst, int frames)
 	return emu_of(h)->get_osd()->pull_sound(dst, frames);
 }
 
+int bx1_get_buffered_audio_frames(bx1_handle h)
+{
+	return emu_of(h)->get_osd()->get_buffered_sound_frames();
+}
+
 void bx1_mute_sound(bx1_handle h)
 {
 	emu_of(h)->mute_sound();

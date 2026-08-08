@@ -8,12 +8,28 @@
 
 	BubiX1turboZ: sound ring buffer.
 
-	Unlike win32's OSD, which paces vm->create_sound() calls off a DirectSound
-	playback cursor, this OSD just synthesizes one chunk per update_sound()
-	call and appends it to a ring buffer. Playback pacing (calling
-	bx1_run_frame repeatedly based on how much the SDL audio callback has
-	consumed) is the Nim layer's job — see the phase 1 architecture note
-	"frame sync is audio-clock driven" in docs/dev/DevelopmentPlan.md.
+	Unlike win32's OSD, which paces vm->create_sound() calls off a
+	DirectSound playback cursor (only synthesizing once the host has
+	consumed roughly half its buffer), this OSD gates on the ring buffer's
+	own occupancy: skip create_sound() while it is already comfortably
+	full. This matters because vm->create_sound() advances the VM
+	internally by however many frames it takes to fill one sound_samples
+	chunk (~6 VM frames at 62500Hz/100ms latency and 61.94fps) and reports
+	that count via extra_frames, which EMU::run() (emu.cpp) uses to skip
+	its own vm->run() call for this tick. Calling create_sound() on every
+	single update_sound() tick - as an earlier version of this file did -
+	means every bx1_run_frame() call from the host advances the VM by a
+	whole chunk instead of one frame, so a host loop paced at 61.94Hz runs
+	the machine several times too fast while still looking correct in a
+	framebuffer/audio-presence smoke test (see docs/dev/DevelopmentPlan.md
+	phase 4/5 notes). Gating below reproduces win32's "only synthesize
+	when the buffer actually needs it" behavior without touching any host
+	audio API.
+
+	Playback pacing (calling bx1_run_frame while
+	bx1_get_buffered_audio_frames() stays under the desired latency) is
+	the Nim layer's job - see the phase 1 architecture note "frame sync is
+	audio-clock driven" in docs/dev/DevelopmentPlan.md.
 */
 
 #include "osd.h"
@@ -22,6 +38,20 @@ void OSD::update_sound(int* extra_frames)
 {
 	*extra_frames = 0;
 	if(!sound_available) {
+		return;
+	}
+
+	pthread_mutex_lock(&sound_mutex);
+	// Keep roughly two chunks buffered - enough headroom that a host tick
+	// jitter doesn't underrun, but not so much that audio (and, since
+	// this is also the VM-advance trigger, gameplay) lags noticeably
+	// behind host real time.
+	bool need_more = sound_ring_count < 2 * sound_samples;
+	pthread_mutex_unlock(&sound_mutex);
+	if(!need_more) {
+		// Ring buffer already has enough headroom; let this tick advance
+		// the VM by exactly one frame via the plain vm->run() path in
+		// EMU::run() instead.
 		return;
 	}
 
@@ -63,6 +93,14 @@ int OSD::pull_sound(int16_t* dst, int frames)
 	}
 	sound_ring_head = (sound_ring_head + n) % sound_ring_capacity;
 	sound_ring_count -= n;
+	pthread_mutex_unlock(&sound_mutex);
+	return n;
+}
+
+int OSD::get_buffered_sound_frames()
+{
+	pthread_mutex_lock(&sound_mutex);
+	int n = sound_ring_count;
 	pthread_mutex_unlock(&sound_mutex);
 	return n;
 }

@@ -76,6 +76,11 @@ int bx1_get_actual_sound_rate(bx1_handle h);
 /// Drains up to `frames` interleaved int16 stereo frames into dst. Returns
 /// the number of frames actually copied (may be less than requested).
 int bx1_pull_audio(bx1_handle h, int16_t* dst, int frames);
+/// Frames currently sitting in the ring buffer, not yet pulled. This is
+/// the audio-clock pacing signal: keep calling bx1_run_frame while this
+/// stays below the host's desired latency (docs/dev/DevelopmentPlan.md,
+/// "frame sync is audio-clock driven").
+int bx1_get_buffered_audio_frames(bx1_handle h);
 void bx1_mute_sound(bx1_handle h);
 
 // ----------------------------------------------------------------------
