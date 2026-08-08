@@ -5,8 +5,14 @@
 ## - see docs/dev/DevelopmentPlan.md phase 5).
 ##
 ## Window ownership follows the phase 1.2 spike's proven design (案 B):
-## uing owns the menu bar, SDL2 owns the emulation surface. Two invariants
-## from that spike are load-bearing and must not be reordered:
+## uing owns the application object and the menu bar, SDL2 owns the
+## emulation surface. The menus themselves are built as plain AppKit
+## objects on top of libui's menu bar (see nativemenu.nim) because libui-ng
+## cannot nest menus and the structure this app mirrors is two levels deep;
+## libui keeps only the application menu's About and Quit.
+##
+## Two invariants from that spike are load-bearing and must not be
+## reordered:
 ##   1. `uing.init()` must run before `sdl2.init()`, or SDL's Cocoa
 ##      backend claims `NSApp` first and libui's window/menu/text-edit
 ##      event handling silently breaks (looks fine until you type).
