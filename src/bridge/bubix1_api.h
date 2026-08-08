@@ -33,8 +33,16 @@ typedef void* bx1_handle;
 /// core resolves ROM and on-disk state paths against (create_local_path);
 /// the host is responsible for placing/symlinking ROMs there before
 /// calling this (see docs/dev/VendorPatches.md, "get_application_path").
-bx1_handle bx1_create(const char* base_dir);
+/// `config_path`: an INI file previously written by bx1_save_config(), or
+/// NULL/empty to start from built-in defaults. Config must be loaded
+/// before the VM is constructed (EMU's constructor reads config.sound_*
+/// synchronously), so this happens inside bx1_create rather than as a
+/// separate call.
+bx1_handle bx1_create(const char* base_dir, const char* config_path);
 void bx1_destroy(bx1_handle h);
+/// Writes the current configuration (monitor/sound type, scanline, sound
+/// volume, ...) to an INI file at `config_path`, creating it if needed.
+void bx1_save_config(bx1_handle h, const char* config_path);
 void bx1_reset(bx1_handle h);
 /// NEW ON / IPL reset (USE_SPECIAL_RESET).
 void bx1_special_reset(bx1_handle h);
@@ -136,11 +144,18 @@ int bx1_load_state(bx1_handle h, const char* path);
 
 /// type: USE_MONITOR_TYPE values (15kHz/24kHz for X1turboZ).
 void bx1_set_monitor_type(bx1_handle h, int type);
-/// type: USE_SOUND_TYPE values.
+int bx1_get_monitor_type(bx1_handle h);
+/// type: USE_SOUND_TYPE values (0 = PSG only, 1 = +1 CZ-8BS1 FM board,
+/// 2 = +2 CZ-8BS1 FM boards).
 void bx1_set_sound_type(bx1_handle h, int type);
+int bx1_get_sound_type(bx1_handle h);
 /// device: USE_SOUND_VOLUME channel index. decibel_l/decibel_r: passed
 /// straight through to EMU::set_sound_device_volume.
 void bx1_set_volume(bx1_handle h, int device, int decibel_l, int decibel_r);
+/// USE_SCANLINE: draws every other output line black instead of
+/// duplicating it, approximating a CRT's scanline gaps.
+void bx1_set_scan_line(bx1_handle h, int enabled);
+int bx1_get_scan_line(bx1_handle h);
 
 #ifdef __cplusplus
 }

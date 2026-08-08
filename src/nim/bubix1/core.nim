@@ -9,8 +9,10 @@
 type
   Bx1Handle* = pointer
 
-proc bx1Create*(baseDir: cstring): Bx1Handle {.importc: "bx1_create", bx1.}
+proc bx1Create*(baseDir: cstring, configPath: cstring): Bx1Handle
+  {.importc: "bx1_create", bx1.}
 proc bx1Destroy*(h: Bx1Handle) {.importc: "bx1_destroy", bx1.}
+proc bx1SaveConfig*(h: Bx1Handle, configPath: cstring) {.importc: "bx1_save_config", bx1.}
 proc bx1Reset*(h: Bx1Handle) {.importc: "bx1_reset", bx1.}
 proc bx1SpecialReset*(h: Bx1Handle) {.importc: "bx1_special_reset", bx1.}
 
@@ -57,6 +59,10 @@ proc bx1SaveState*(h: Bx1Handle, path: cstring): cint {.importc: "bx1_save_state
 proc bx1LoadState*(h: Bx1Handle, path: cstring): cint {.importc: "bx1_load_state", bx1.}
 
 proc bx1SetMonitorType*(h: Bx1Handle, kind: cint) {.importc: "bx1_set_monitor_type", bx1.}
+proc bx1GetMonitorType*(h: Bx1Handle): cint {.importc: "bx1_get_monitor_type", bx1.}
 proc bx1SetSoundType*(h: Bx1Handle, kind: cint) {.importc: "bx1_set_sound_type", bx1.}
+proc bx1GetSoundType*(h: Bx1Handle): cint {.importc: "bx1_get_sound_type", bx1.}
 proc bx1SetVolume*(h: Bx1Handle, device, decibelL, decibelR: cint)
   {.importc: "bx1_set_volume", bx1.}
+proc bx1SetScanLine*(h: Bx1Handle, enabled: cint) {.importc: "bx1_set_scan_line", bx1.}
+proc bx1GetScanLine*(h: Bx1Handle): cint {.importc: "bx1_get_scan_line", bx1.}

@@ -2,11 +2,13 @@
 # Builds the vendored C++ core (arm64 / Apple clang) into a static library.
 #
 # Compiles the translation units listed in the original
-# vc++2017/x1turboz.vcxproj (minus src/win32/*), plus the new
-# src/core/sdl/*.cpp OSD implementation, into build/libbubix1core.a.
+# vc++2017/x1turboz.vcxproj (minus src/win32/*), the new src/core/sdl/*.cpp
+# OSD implementation, and the src/bridge/*.cpp C ABI facade, into
+# build/libbubix1core.a. This is the one library scripts/build_app_macos_dev.sh
+# links the Nim application against.
 #
 # Usage: ./scripts/build_core.sh [group]
-#   group = vm | app | osd | all (default: all)
+#   group = vm | app | osd | bridge | all (default: all)
 
 set -u
 cd "$(dirname "$0")/.."
@@ -48,12 +50,19 @@ OSD_SRCS=(
   sdl/osd.cpp sdl/osd_screen.cpp sdl/osd_sound.cpp sdl/osd_input.cpp
   sdl/osd_bitmap.cpp sdl/osd_console.cpp sdl/osd_midi.cpp
 )
+# Relative to repo root, not $SRC: the bridge lives at src/bridge, not
+# under src/core. Its own quoted #includes ("../core/emu.h",
+# "bubix1_api.h") resolve directory-relative regardless of -I.
+BRIDGE_SRCS=(
+  src/bridge/bubix1_api.cpp
+)
 
 case "${1:-all}" in
-  vm)  SRCS=("${VM_SRCS[@]}") ;;
-  app) SRCS=("${APP_SRCS[@]}") ;;
-  osd) SRCS=("${OSD_SRCS[@]}") ;;
-  *)   SRCS=("${VM_SRCS[@]}" "${APP_SRCS[@]}" "${OSD_SRCS[@]}") ;;
+  vm)     SRCS=("${VM_SRCS[@]}") ;;
+  app)    SRCS=("${APP_SRCS[@]}") ;;
+  osd)    SRCS=("${OSD_SRCS[@]}") ;;
+  bridge) SRCS=() ;;
+  *)      SRCS=("${VM_SRCS[@]}" "${APP_SRCS[@]}" "${OSD_SRCS[@]}") ;;
 esac
 
 rm -rf "$OBJ"; mkdir -p "$OBJ"
@@ -70,6 +79,18 @@ for s in "${SRCS[@]}"; do
     fail=$((fail+1)); failed+=("$s")
   fi
 done
+if [ "${1:-all}" = "bridge" ] || [ "${1:-all}" = "all" ]; then
+  for s in "${BRIDGE_SRCS[@]}"; do
+    o="$OBJ/${s//\//_}.o"
+    if "$CXX" "${CXXFLAGS[@]}" "$s" -o "$o" >>"$LOG" 2>&1; then
+      printf 'ok   %s\n' "$s"
+      pass=$((pass+1))
+    else
+      printf 'FAIL %s\n' "$s"
+      fail=$((fail+1)); failed+=("$s")
+    fi
+  done
+fi
 
 echo "----"
 echo "pass=$pass fail=$fail  objects=$(ls "$OBJ" | wc -l | tr -d ' ')"

@@ -20,16 +20,24 @@ inline EMU* emu_of(bx1_handle h)
 }
 }
 
-bx1_handle bx1_create(const char* base_dir)
+bx1_handle bx1_create(const char* base_dir, const char* config_path)
 {
 	set_application_path(base_dir);
 	initialize_config();
+	if(config_path != NULL && config_path[0] != '\0') {
+		load_config(config_path);
+	}
 	return new EMU();
 }
 
 void bx1_destroy(bx1_handle h)
 {
 	delete emu_of(h);
+}
+
+void bx1_save_config(bx1_handle h, const char* config_path)
+{
+	save_config(config_path);
 }
 
 void bx1_reset(bx1_handle h)
@@ -190,13 +198,37 @@ void bx1_set_monitor_type(bx1_handle h, int type)
 	emu_of(h)->update_config();
 }
 
+int bx1_get_monitor_type(bx1_handle h)
+{
+	(void)h;
+	return config.monitor_type;
+}
+
 void bx1_set_sound_type(bx1_handle h, int type)
 {
 	config.sound_type = type;
 	emu_of(h)->update_config();
 }
 
+int bx1_get_sound_type(bx1_handle h)
+{
+	(void)h;
+	return config.sound_type;
+}
+
 void bx1_set_volume(bx1_handle h, int device, int decibel_l, int decibel_r)
 {
 	emu_of(h)->set_sound_device_volume(device, decibel_l, decibel_r);
+}
+
+void bx1_set_scan_line(bx1_handle h, int enabled)
+{
+	config.scan_line = (enabled != 0);
+	emu_of(h)->update_config();
+}
+
+int bx1_get_scan_line(bx1_handle h)
+{
+	(void)h;
+	return config.scan_line ? 1 : 0;
 }

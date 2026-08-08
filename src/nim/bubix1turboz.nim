@@ -15,63 +15,182 @@
 ##      libraries pump the same Cocoa event queue with
 ##      `nextEventMatchingMask`, and whichever runs first wins.
 ##
-## ROM/config path handling here is a placeholder (a required CLI arg).
-## docs/dev/DevelopmentPlan.md phase 6 replaces this with a proper
-## platform-conventions path module (~/Library/Application Support/...
-## on macOS) - do not build that logic here.
+## Menu policy follows BluePrint/DevelopmentPlan 0.5: the core still has
+## USE_FLOPPY_DISK=4 and USE_HARD_DISK, but only floppy drives 1-2 and no
+## HDD are exposed here - feature reduction happens at this layer, not in
+## the core.
 
-import std/[os, strformat]
+import std/[os, strformat, strutils]
 import uing
 import sdl2
 import sdl2/audio
 import bubix1/core
 import bubix1/keymap
+import bubix1/paths
+import bubix1/cocoamenu
+import bubix1/recentfiles
 
 const
   ScreenWidth = 640
   ScreenHeight = 400
   WindowHeightAspect = 480 # WINDOW_HEIGHT_ASPECT from vm/x1/x1.h
+  RecentSlots = 8 # matches MAX_HISTORY in src/core/config.h
 
 proc fail(msg: string) =
   stderr.writeLine "bubix1turboz: " & msg
   quit 1
 
 proc main() =
-  let args = commandLineParams()
-  if args.len < 1:
-    fail "usage: bubix1turboz <rom_dir>  (temporary until phase 6's path module lands)"
-  let romDir = args[0]
+  paths.ensureDirsExist()
 
   # Invariant 1: uing before SDL.
   uing.init()
   if not sdl2.init(INIT_VIDEO or INIT_AUDIO or INIT_EVENTS):
     fail "SDL_Init failed: " & $getError()
 
-  let h = bx1Create(romDir.cstring)
+  let h = bx1Create(paths.romsDir().cstring, paths.configFilePath().cstring)
   if h == nil:
-    fail "bx1_create failed (check rom_dir contains IPLROM.X1T etc.)"
-  if args.len >= 2:
-    let inserted = bx1OpenFloppy(h, 0, args[1].cstring, 0)
-    echo &"floppy insert: {inserted}"
+    fail "bx1_create failed (place BIOS ROMs in " & paths.romsDir() & ")"
+
+  var recent = recentfiles.load(paths.recentFilesPath())
+  var running = true
+  var paused = false
+
+  proc rememberRecent(path: string) =
+    recent = recentfiles.pushFront(recent, path)
+    for i in 0 ..< RecentSlots:
+      let label = if i < recent.len: &"{i+1}. {recent[i].extractFilename()}" else: &"{i+1}. (empty)"
+      discard cocoamenu.setMenuItemTitle("File", &"{i+1}. ", label)
+
+  proc openFloppyAt(parent: Window, drv: int) =
+    let path = uing.openFile(parent)
+    if path.len > 0:
+      let inserted = bx1OpenFloppy(h, drv.cint, path.cstring, 0)
+      if inserted != 0:
+        rememberRecent(path)
 
   var win: Window
+
+  # --- File menu ---
   let fileMenu = newMenu "File"
+  fileMenu.addItem("Open Floppy 1...", proc (sender: MenuItem, w: Window) =
+    openFloppyAt(w, 0))
+  fileMenu.addItem("Open Floppy 2...", proc (sender: MenuItem, w: Window) =
+    openFloppyAt(w, 1))
+  fileMenu.addItem("Eject Floppy 1", proc (sender: MenuItem, w: Window) =
+    bx1CloseFloppy(h, 0))
+  fileMenu.addItem("Eject Floppy 2", proc (sender: MenuItem, w: Window) =
+    bx1CloseFloppy(h, 1))
+  fileMenu.addSeparator()
+  fileMenu.addItem("Open Tape...", proc (sender: MenuItem, w: Window) =
+    let path = uing.openFile(w)
+    if path.len > 0:
+      if bx1OpenTape(h, path.cstring, 1) != 0:
+        rememberRecent(path))
+  fileMenu.addItem("Eject Tape", proc (sender: MenuItem, w: Window) =
+    bx1CloseTape(h))
+  fileMenu.addSeparator()
+  # Fixed slots (not a real submenu - uing/libui-ng menus cannot nest).
+  # Titles are rewritten in place via cocoamenu.setMenuItemTitle as the
+  # recent list changes; "N. " is the stable prefix used to find them.
+  for i in 0 ..< RecentSlots:
+    let idx = i
+    let label = if idx < recent.len: &"{idx+1}. {recent[idx].extractFilename()}" else: &"{idx+1}. (empty)"
+    fileMenu.addItem(label, proc (sender: MenuItem, w: Window) =
+      if idx < recent.len:
+        let path = recent[idx]
+        let ext = path.splitFile().ext.toLowerAscii()
+        if ext in [".tap", ".cmt", ".t88", ".wav"]:
+          discard bx1OpenTape(h, path.cstring, 1)
+        else:
+          discard bx1OpenFloppy(h, 0, path.cstring, 0))
+  fileMenu.addSeparator()
   fileMenu.addQuitItem(proc (): bool =
+    running = false
     if win != nil:
       win.destroy()
       win = nil
     true)
+
+  # --- Machine menu ---
+  let machineMenu = newMenu "Machine"
+  machineMenu.addItem("Reset", proc (sender: MenuItem, w: Window) =
+    bx1Reset(h))
+  machineMenu.addItem("Special Reset (NEW ON)", proc (sender: MenuItem, w: Window) =
+    bx1SpecialReset(h))
+  machineMenu.addCheckItem("Pause", proc (sender: MenuItem, w: Window) =
+    paused = sender.checked)
+
+  # --- State menu ---
+  let stateMenu = newMenu "State"
+  stateMenu.addItem("Save State...", proc (sender: MenuItem, w: Window) =
+    let path = uing.saveFile(w)
+    if path.len > 0:
+      discard bx1SaveState(h, path.cstring))
+  stateMenu.addItem("Load State...", proc (sender: MenuItem, w: Window) =
+    let path = uing.openFile(w)
+    if path.len > 0:
+      discard bx1LoadState(h, path.cstring))
+
+  # --- Settings menu ---
+  # Manual "radio button" behavior: each group is a set of check items
+  # where selecting one clears the others. uing/libui-ng has no native
+  # radio-item type.
+  let settingsMenu = newMenu "Settings"
+  var monitorItems: array[2, MenuItem]
+  let monitorLabels = ["Monitor: 15kHz", "Monitor: 24kHz"]
+  for i in 0 ..< 2:
+    let idx = i
+    monitorItems[i] = settingsMenu.addCheckItem(monitorLabels[i], proc (sender: MenuItem, w: Window) =
+      bx1SetMonitorType(h, idx.cint)
+      for j in 0 ..< 2:
+        monitorItems[j].checked = (j == idx))
+  settingsMenu.addSeparator()
+  var soundItems: array[3, MenuItem]
+  let soundLabels = ["Sound: PSG Only", "Sound: +1 FM Board (CZ-8BS1)", "Sound: +2 FM Boards (CZ-8BS1)"]
+  for i in 0 ..< 3:
+    let idx = i
+    soundItems[i] = settingsMenu.addCheckItem(soundLabels[i], proc (sender: MenuItem, w: Window) =
+      bx1SetSoundType(h, idx.cint)
+      for j in 0 ..< 3:
+        soundItems[j].checked = (j == idx))
+  settingsMenu.addSeparator()
+  let scanlineItem = settingsMenu.addCheckItem("Scanline Effect", proc (sender: MenuItem, w: Window) =
+    # libui-ng check items do not auto-toggle on click - unlike the
+    # monitor/sound radio groups above (which always assign `.checked`
+    # explicitly for every item in the group), a lone toggle has to flip
+    # its own state by hand, or it reads back whatever it was last set to.
+    sender.checked = not sender.checked
+    bx1SetScanLine(h, sender.checked.cint))
+
   win = newWindow("BubiX1turboZ", 320, 80, true)
   win.margined = true
   let box = newVerticalBox(true)
   box.add newLabel("BubiX1turboZ")
   win.child = box
-  var running = true
   win.onClosing = proc (sender: Window): bool =
     running = false
     win = nil
     true
   win.show()
+
+  # Reflect the config loaded by bx1_create (either from config.ini or
+  # built-in defaults) in the initial checkmarks.
+  let curMonitor = bx1GetMonitorType(h)
+  if curMonitor >= 0 and curMonitor < 2:
+    monitorItems[curMonitor].checked = true
+  let curSound = bx1GetSoundType(h)
+  if curSound >= 0 and curSound < 3:
+    soundItems[curSound].checked = true
+  scanlineItem.checked = bx1GetScanLine(h) != 0
+
+  # libui-ng attaches no keyboard shortcuts to any menu item (phase 1.2);
+  # wire up the standard macOS ones by hand. Must happen after win.show()
+  # - NSApp has no main menu before that.
+  discard cocoamenu.setMenuShortcut("", "Quit", "q")
+  discard cocoamenu.setMenuShortcut("Machine", "Reset", "r")
+  discard cocoamenu.setMenuShortcut("State", "Save State", "s")
+  discard cocoamenu.setMenuShortcut("State", "Load State", "l")
 
   # Nearest-neighbor scaling: X1 text/graphics are drawn at exact pixel
   # boundaries, and linear filtering (SDL's default for the accelerated
@@ -118,10 +237,6 @@ proc main() =
   let audioDev = openAudioDevice(nil, 0.cint, addr desired, addr obtained, 0)
   if audioDev == 0:
     fail "SDL_OpenAudioDevice failed: " & $getError()
-  # obtained.freq may legitimately differ from desired.freq if the OS
-  # resampled; bx1_pull_audio always hands back soundRate-rate samples
-  # regardless, so this is only relevant if SDL's own resampling quality
-  # ever becomes a concern.
   echo &"audio device opened at {obtained.freq}Hz (requested {soundRate}Hz)"
   pauseAudioDevice(audioDev, 0)
 
@@ -161,41 +276,39 @@ proc main() =
       else:
         discard
     discard uing.mainStep(0)
-    if win == nil and running:
-      # uing's Quit menu item destroys the window without necessarily
-      # clearing `running` via onClosing; addQuitItem's own callback
-      # above does that already, so this is just documentation of the
-      # invariant that `win == nil` implies shutdown is in progress.
-      discard
 
-    # Audio-clock-driven pacing (docs/dev/DevelopmentPlan.md architecture
-    # decision 4): keep advancing the VM while the ring buffer the SDL
-    # callback drains from is below the target latency.
-    runFrameSafetyCounter = 0
-    while bx1GetBufferedAudioFrames(h) < targetBufferedFrames:
-      discard bx1RunFrame(h)
-      inc runFrameSafetyCounter
-      if runFrameSafetyCounter > 1000:
-        # Should be unreachable in normal operation; bail out rather than
-        # freeze the UI if the VM ever stops producing audio progress.
-        break
+    if not paused:
+      # Audio-clock-driven pacing (docs/dev/DevelopmentPlan.md architecture
+      # decision 4): keep advancing the VM while the ring buffer the SDL
+      # callback drains from is below the target latency.
+      runFrameSafetyCounter = 0
+      while bx1GetBufferedAudioFrames(h) < targetBufferedFrames:
+        discard bx1RunFrame(h)
+        inc runFrameSafetyCounter
+        if runFrameSafetyCounter > 1000:
+          # Should be unreachable in normal operation; bail out rather than
+          # freeze the UI if the VM ever stops producing audio progress.
+          break
 
-    bx1DrawScreen(h)
-    var pixels: pointer
-    var pitch: cint
-    if texture.lockTexture(nil, addr pixels, addr pitch):
-      let fb = bx1GetFramebuffer(h)
-      let srcStride = ScreenWidth * 4
-      if pitch.int == srcStride:
-        copyMem(pixels, fb, ScreenHeight * srcStride)
-      else:
-        for y in 0 ..< ScreenHeight:
-          copyMem(cast[pointer](cast[uint](pixels) + uint(y * pitch.int)),
-                  cast[pointer](cast[uint](fb) + uint(y * srcStride)), srcStride)
-      texture.unlockTexture()
-    renderer.clear()
-    renderer.copy(texture, nil, nil)
-    renderer.present()
+      bx1DrawScreen(h)
+      var pixels: pointer
+      var pitch: cint
+      if texture.lockTexture(nil, addr pixels, addr pitch):
+        let fb = bx1GetFramebuffer(h)
+        let srcStride = ScreenWidth * 4
+        if pitch.int == srcStride:
+          copyMem(pixels, fb, ScreenHeight * srcStride)
+        else:
+          for y in 0 ..< ScreenHeight:
+            copyMem(cast[pointer](cast[uint](pixels) + uint(y * pitch.int)),
+                    cast[pointer](cast[uint](fb) + uint(y * srcStride)), srcStride)
+        texture.unlockTexture()
+      renderer.clear()
+      renderer.copy(texture, nil, nil)
+      renderer.present()
+
+  bx1SaveConfig(h, paths.configFilePath().cstring)
+  recentfiles.save(paths.recentFilesPath(), recent)
 
   closeAudioDevice(audioDev)
   texture.destroy()
