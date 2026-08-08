@@ -51,7 +51,6 @@ proc main() =
   let h = bx1Create(paths.romsDir().cstring, paths.configFilePath().cstring)
   if h == nil:
     fail "bx1_create failed (place BIOS ROMs in " & paths.romsDir() & ")"
-
   var recent = recentfiles.load(paths.recentFilesPath())
   var running = true
   var paused = false
@@ -138,7 +137,13 @@ proc main() =
   # radio-item type.
   let settingsMenu = newMenu "Settings"
   var monitorItems: array[2, MenuItem]
-  let monitorLabels = ["Monitor: 15kHz", "Monitor: 24kHz"]
+  # Labels and index order match the original Windows app's own
+  # Device > Display menu (confirmed by side-by-side comparison - see
+  # docs/dev/DevelopmentPlan.md phase 5's resolved open item). Index 1
+  # ("Standard") is the one that renders text correctly; index 0 ("High
+  # Resolution") has a pre-existing glyph rendering bug present in the
+  # original app too, not something introduced by this port.
+  let monitorLabels = ["Monitor: High Resolution", "Monitor: Standard"]
   for i in 0 ..< 2:
     let idx = i
     monitorItems[i] = settingsMenu.addCheckItem(monitorLabels[i], proc (sender: MenuItem, w: Window) =

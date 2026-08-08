@@ -23,11 +23,43 @@ inline EMU* emu_of(bx1_handle h)
 bx1_handle bx1_create(const char* base_dir, const char* config_path)
 {
 	set_application_path(base_dir);
-	initialize_config();
-	if(config_path != NULL && config_path[0] != '\0') {
+
+	// load_config() unconditionally calls initialize_config() itself
+	// before applying any overrides (config.cpp: it's written to load a
+	// complete config, not to patch one), so a default assigned before
+	// calling it would just be wiped out. Only call it when there is
+	// actually a file to read; otherwise fall back to
+	// initialize_config() and our own default below.
+	bool loaded = config_path != NULL && config_path[0] != '\0' && FILEIO::IsFileExisting(config_path);
+	if(loaded) {
 		load_config(config_path);
+	} else {
+		initialize_config();
 	}
-	return new EMU();
+
+	// x1.h defines no MONITOR_TYPE_DEFAULT, so a fresh config leaves
+	// config.monitor_type at 0 ("High Resolution" in the original app's
+	// Device > Display menu). That mode has a genuine, pre-existing text
+	// rendering bug confirmed against the original Windows build itself
+	// (top half of each glyph missing outside the IPL's own hardcoded
+	// font) - see docs/dev/DevelopmentPlan.md phase 5's open item. 1
+	// ("Standard") renders correctly, so use that as the default on a
+	// fresh install; a saved config.ini's own value always wins. Not a
+	// core change: x1.h/config.cpp are untouched.
+	if(!loaded) {
+		config.monitor_type = 1;
+	}
+
+	EMU* emu = new EMU();
+	// VM::update_dipswitch() (which is what actually latches
+	// config.monitor_type into the I/O port the boot ROM reads at
+	// 0x1ff0) only runs from VM::update_config(), never from the VM's
+	// constructor. Without this call, the monitor_type set above (or
+	// loaded from config.ini) has no effect until the user opens the
+	// Settings menu and changes something, and the machine boots as if
+	// monitor_type were still 0.
+	emu->update_config();
+	return emu;
 }
 
 void bx1_destroy(bx1_handle h)
