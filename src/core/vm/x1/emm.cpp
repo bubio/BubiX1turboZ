@@ -1,0 +1,110 @@
+/*
+	SHARP X1 Emulator 'eX1'
+	SHARP X1twin Emulator 'eX1twin'
+	SHARP X1turbo Emulator 'eX1turbo'
+	SHARP X1turboZ Emulator 'eX1turboZ'
+
+	Author : Takeda.Toshiya
+	Date   : 2011.02.17-
+
+	[ emm ]
+*/
+
+#include "emm.h"
+
+void EMM::initialize()
+{
+	// init memory
+	data_buffer = (uint8_t*)malloc(EMM_BUFFER_SIZE);
+	memset(data_buffer, 0, EMM_BUFFER_SIZE);
+	modified = false;
+	
+	// load emm image
+	FILEIO* fio = new FILEIO();
+	if(fio->Fopen(create_local_path(_T("EMM.ROM")), FILEIO_READ_BINARY)) {
+		fio->Fread(data_buffer, EMM_BUFFER_SIZE, 1);
+		fio->Fclose();
+	} else if(fio->Fopen(create_local_path(_T("EMM.BIN")), FILEIO_READ_BINARY)) {
+		fio->Fread(data_buffer, EMM_BUFFER_SIZE, 1);
+		fio->Fclose();
+	}
+	delete fio;
+}
+
+void EMM::release()
+{
+	// save emm image
+	if(modified) {
+		FILEIO* fio = new FILEIO();
+		if(fio->Fopen(create_local_path(_T("EMM.BIN")), FILEIO_WRITE_BINARY)) {
+			fio->Fwrite(data_buffer, EMM_BUFFER_SIZE, 1);
+			fio->Fclose();
+		}
+		delete fio;
+	}
+	
+	// release memory
+	if(data_buffer != NULL) {
+		free(data_buffer);
+	}
+}
+
+void EMM::reset()
+{
+	data_addr = 0;
+}
+
+void EMM::write_io8(uint32_t addr, uint32_t data)
+{
+	switch(addr & 3) {
+	case 0:
+		data_addr = (data_addr & 0xffff00) | data;
+		break;
+	case 1:
+		data_addr = (data_addr & 0xff00ff) | (data << 8);
+		break;
+	case 2:
+		data_addr = (data_addr & 0x00ffff) | (data << 16);
+		break;
+	case 3:
+		if(data_addr < EMM_BUFFER_SIZE) {
+			if(data_buffer[data_addr] != (uint8_t)data) {
+				data_buffer[data_addr] = data;
+				modified = true;
+			}
+		}
+		data_addr = (data_addr + 1) & 0xffffff;
+		break;
+	}
+}
+
+uint32_t EMM::read_io8(uint32_t addr)
+{
+	uint32_t data = 0xff;
+	
+	switch(addr & 3) {
+	case 3:
+		if(data_addr < EMM_BUFFER_SIZE) {
+			data = data_buffer[data_addr];
+		}
+		data_addr = (data_addr + 1) & 0xffffff;
+		return data;
+	}
+	return 0xff;
+}
+
+#define STATE_VERSION	2
+
+bool EMM::process_state(FILEIO* state_fio, bool loading)
+{
+	if(!state_fio->StateCheckUint32(STATE_VERSION)) {
+		return false;
+	}
+	if(!state_fio->StateCheckInt32(this_device_id)) {
+		return false;
+	}
+	state_fio->StateArray(data_buffer, sizeof(data_buffer), 1);
+	state_fio->StateValue(data_addr);
+	state_fio->StateValue(modified);
+	return true;
+}
