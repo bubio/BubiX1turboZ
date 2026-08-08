@@ -212,6 +212,21 @@ void bx1_close_tape(bx1_handle h)
 	emu_of(h)->close_tape(0);
 }
 
+int bx1_is_floppy_disk_accessed(bx1_handle h, int drv)
+{
+	// is_floppy_disk_accessed() returns a bitmask (bit N = drive N); this
+	// reflects the disk controller's live motor/head state, not merely
+	// "is a disk inserted", so it is the correct signal for an activity
+	// lamp rather than bx1_open_floppy's return value.
+	return (emu_of(h)->is_floppy_disk_accessed() & (1u << drv)) ? 1 : 0;
+}
+
+int bx1_is_tape_active(bx1_handle h)
+{
+	EMU* emu = emu_of(h);
+	return (emu->is_tape_playing(0) || emu->is_tape_recording(0)) ? 1 : 0;
+}
+
 int bx1_save_state(bx1_handle h, const char* path)
 {
 	emu_of(h)->save_state(path);

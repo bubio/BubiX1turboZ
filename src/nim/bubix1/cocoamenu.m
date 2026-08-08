@@ -94,3 +94,38 @@ int bx1_menu_set_enabled(const char *menu_title, const char *item_prefix, int en
 	[item setEnabled:(enabled != 0)];
 	return 1;
 }
+
+void bx1_menu_disable_autoenable_all(void)
+{
+	NSMenu *bar;
+
+	if (NSApp == nil) {
+		return;
+	}
+	bar = [NSApp mainMenu];
+	if (bar == nil) {
+		return;
+	}
+	// NSMenu's default autoenablesItems (YES) re-derives every item's
+	// enabled state from its target/action pair right before the menu is
+	// displayed, silently discarding any manual setEnabled: call on an
+	// item that has one (which every libui-ng item does). This alone
+	// would just make bx1_menu_set_enabled a no-op, but there is a worse
+	// failure mode: libui-ng's file-open dialog (uiOpenFile) can leave
+	// NSApp's modal-session bookkeeping in a broken state on close
+	// (logged by AppKit as "modalSession has been exited prematurely" -
+	// reproduced with nothing but the stock File > Open Floppy flow, so
+	// this is not specific to any one dialog call site). While NSApp
+	// believes a modal session is still active, autoenablesItems treats
+	// every item outside that phantom modal window as invalid and
+	// disables it - which reads as "the entire menu bar is now dead"
+	// after using any Open/Save dialog. Turning autoenablesItems off for
+	// every submenu removes the dependency on that bookkeeping entirely;
+	// nothing in this app relies on Cocoa's automatic validation, so
+	// there is no behavior this disables that was ever wanted.
+	for (NSMenuItem *top in [bar itemArray]) {
+		if ([top submenu] != nil) {
+			[[top submenu] setAutoenablesItems:NO];
+		}
+	}
+}

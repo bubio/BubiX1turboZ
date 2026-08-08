@@ -7,7 +7,7 @@
 # can be iterated on locally without going through CI or a full bundle.
 #
 # Usage: ./scripts/build_app_macos_dev.sh
-# Then:  ./build/bubix1turboz <rom_dir> [d88_path]
+# Then:  ./build/BubiX1turboZ <rom_dir> [d88_path]
 #   rom_dir is a temporary positional arg until phase 6's path module
 #   (~/Library/Application Support/BubiX1turboZ/roms) replaces it.
 
@@ -22,12 +22,18 @@ fi
 
 SDL_CFLAGS="$(sdl2-config --cflags)"
 
+# .nimble is the single source of truth for the app version (see its own
+# comment); read it here rather than hardcoding it a second time in the
+# Nim source, so the About dialog can display it.
+APP_VERSION="$(grep '^version' *.nimble | sed -E 's/.*"(.*)".*/\1/')"
+
 mise exec -- nim c -d:release --hints:off \
   --dynlibOverride:SDL2 \
   --passC:"$SDL_CFLAGS -Isrc/bridge" \
   --passL:"-L/opt/homebrew/lib -lSDL2 $(pwd)/$LIB -lc++" \
   --path:src \
-  -o:build/bubix1turboz \
+  -d:appVersion="$APP_VERSION" \
+  -o:build/BubiX1turboZ \
   src/nim/bubix1turboz.nim
 
-echo "built build/bubix1turboz"
+echo "built build/BubiX1turboZ"

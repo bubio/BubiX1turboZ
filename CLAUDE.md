@@ -4,17 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## リポジトリの現状
 
-**このリポジトリはまだスキャフォールド前です（フェーズ 1 まで完了、フェーズ 2 が未着手）。** `src/` も `.nimble` もまだ無く、したがって build / lint / test コマンドは**まだ存在しません**。存在しないコマンドを推測して実行・記載しないでください。
+**フェーズ 7（アーカイブ・ドラッグ＆ドロップ対応）まで完了。次はフェーズ 8（実ゲームによる検証）。** `src/`・`.nimble` とも存在し、ビルドは以下のスクリプトで行う:
+
+- `scripts/build_core.sh [vm|app|osd|bridge|all]` — 静的ライブラリ `build/libbubix1core.a`（vendored C++ コア + OSD + bridge）をビルド
+- `scripts/build_app_macos_dev.sh` — `build/libbubix1core.a` を前提に Nim アプリを `build/BubiX1turboZ` としてビルド（開発用。フェーズ 9 の `.app`/`.dmg` パッケージングはまだ無い）
 
 現時点の構成:
 
 | パス | 追跡 | 内容 |
 |---|---|---|
-| `CLAUDE.md`, `mise.toml`, `.gitignore` | ✅ | Git 管理下にあるのはこの 3 つだけ |
-| `docs/dev/` | ❌ | `BluePrint.md`（仕様）と `DevelopmentPlan.md`（計画・調査結果） |
-| `spike/` | ❌ | フェーズ 1 の検証コードと成果物 |
+| `CLAUDE.md`, `mise.toml`, `.gitignore`, `LICENSE`/`license/`, `README.md`, `*.nimble`, `src/`, `scripts/`, `docs/`（`docs/dev/` を除く） | ✅ | |
+| `docs/dev/` | ❌ | `BluePrint.md`（仕様）と `DevelopmentPlan.md`（計画・進捗・調査結果の一次資料） |
+| `spike/` | ❌ | フェーズ 1 の検証コードと成果物（`src/` へ移設済みのものも含め、参照用にそのまま残置） |
 
-**`spike/` には既に再利用すべき成果物があります。**フェーズ 1.4 で C++ コアの試験コンパイルまで済んでおり、`spike/core/src/sdl/osd.h`（OSD 宣言）、`spike/core/src/compat/vkcodes.h`、`spike/core-patches/*.patch`（オリジナルへのパッチ 6 ファイル分）、`spike/build_core.sh` が揃っています。フェーズ 2 のベンダリングではこれらを `src/` に移すだけで済みます。**ゼロから作り直さないでください。**
+各フェーズで確定した設計判断・不具合と対処・申し送り事項は `docs/dev/DevelopmentPlan.md` に集約されている。**作業前に必ずこれを読み、同じ調査や設計判断をやり直さないこと。**
 
 作業前に必ず以下の 2 つを読んでください。
 

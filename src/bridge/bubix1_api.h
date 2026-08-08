@@ -129,6 +129,14 @@ const char* bx1_get_floppy_bank_name(bx1_handle h, int drv, int bank);
 int bx1_open_tape(bx1_handle h, const char* path, int play);
 void bx1_close_tape(bx1_handle h);
 
+/// drv: 0-3, matching bx1_open_floppy. Returns 1 while that drive's
+/// motor is spun up and selected (i.e. the FDC is actively reading or
+/// writing it right now), 0 otherwise - intended for a live activity
+/// lamp, not "is a disk inserted" (see bx1_open_floppy for that).
+int bx1_is_floppy_disk_accessed(bx1_handle h, int drv);
+/// 1 while the tape deck is playing back or recording, 0 otherwise.
+int bx1_is_tape_active(bx1_handle h);
+
 // ----------------------------------------------------------------------
 // State save/load
 // ----------------------------------------------------------------------

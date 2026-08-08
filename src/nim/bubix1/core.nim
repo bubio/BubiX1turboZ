@@ -55,6 +55,10 @@ proc bx1OpenTape*(h: Bx1Handle, path: cstring, play: cint): cint
   {.importc: "bx1_open_tape", bx1.}
 proc bx1CloseTape*(h: Bx1Handle) {.importc: "bx1_close_tape", bx1.}
 
+proc bx1IsFloppyDiskAccessed*(h: Bx1Handle, drv: cint): cint
+  {.importc: "bx1_is_floppy_disk_accessed", bx1.}
+proc bx1IsTapeActive*(h: Bx1Handle): cint {.importc: "bx1_is_tape_active", bx1.}
+
 proc bx1SaveState*(h: Bx1Handle, path: cstring): cint {.importc: "bx1_save_state", bx1.}
 proc bx1LoadState*(h: Bx1Handle, path: cstring): cint {.importc: "bx1_load_state", bx1.}
 

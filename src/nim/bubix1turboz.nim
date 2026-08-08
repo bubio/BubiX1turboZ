@@ -20,7 +20,7 @@
 ## HDD are exposed here - feature reduction happens at this layer, not in
 ## the core.
 
-import std/[os, strformat, strutils]
+import std/[os, strformat]
 import uing
 import sdl2
 import sdl2/audio
@@ -29,12 +29,30 @@ import bubix1/keymap
 import bubix1/paths
 import bubix1/cocoamenu
 import bubix1/recentfiles
+import bubix1/archive
 
 const
   ScreenWidth = 640
   ScreenHeight = 400
-  WindowHeightAspect = 480 # WINDOW_HEIGHT_ASPECT from vm/x1/x1.h
+  # A status bar bolted onto a second floating window is easy to lose
+  # behind (or below) the main emulator window - confirmed the hard way
+  # when a first attempt at this placed the window at (0, 1308) on a
+  # tall display and nobody noticed it. Drawing the lamps into a strip
+  # at the bottom of the emulator's own window is what "ステータスバー"
+  # means on macOS anyway: part of the one window, not a second one.
+  StatusBarHeight = 24
+  WindowHeight = ScreenHeight + StatusBarHeight
   RecentSlots = 8 # matches MAX_HISTORY in src/core/config.h
+  DiskSlots = 16 # fixed slots for the D88 multi-bank picker (phase 7)
+  # .nimble is the single source of truth for the app version; the build
+  # script reads it and passes it in via -d so it isn't hardcoded twice.
+  # The fallback only matters for ad-hoc `nim c` runs outside the script.
+  appVersion {.strdefine.} = "0.0.0-dev"
+
+# SDL_DROPFILE hands ownership of `event.drop.file` to the caller; the
+# Nim sdl2 binding does not wrap SDL_free itself (see its DropEventObj
+# doc comment), so it is declared directly here.
+proc sdlFreeStr(mem: cstring) {.importc: "SDL_free", cdecl.}
 
 proc fail(msg: string) =
   stderr.writeLine "bubix1turboz: " & msg
@@ -61,12 +79,64 @@ proc main() =
       let label = if i < recent.len: &"{i+1}. {recent[i].extractFilename()}" else: &"{i+1}. (empty)"
       discard cocoamenu.setMenuItemTitle("File", &"{i+1}. ", label)
 
+  # Drive 1's currently-mounted D88 path, kept so the Disk menu (bank
+  # picker below) can re-issue bx1OpenFloppy with a different bank index
+  # without the caller having to remember the path itself. Only drive 1
+  # is exposed here: commercial multi-scenario D88s are conventionally
+  # the main game disk, which goes in drive 1, while drive 2 (if used at
+  # all) is a plain single-image save/data disk.
+  var driveOnePath = ""
+
+  proc updateDiskMenu() =
+    let count = bx1GetFloppyBankCount(h, 0)
+    for i in 0 ..< DiskSlots:
+      let show = i < count
+      let label = if show: &"{i+1}. " & $bx1GetFloppyBankName(h, 0, i.cint) else: &"{i+1}. (unused)"
+      discard cocoamenu.setMenuItemTitle("Disk", &"{i+1}. ", label)
+      discard cocoamenu.setMenuItemEnabled("Disk", &"{i+1}. ", show)
+
+  proc mountFloppy(drv: int, path: string, bank: int): bool =
+    result = bx1OpenFloppy(h, drv.cint, path.cstring, bank.cint) != 0
+    if result and drv == 0:
+      driveOnePath = path
+      updateDiskMenu()
+
   proc openFloppyAt(parent: Window, drv: int) =
     let path = uing.openFile(parent)
-    if path.len > 0:
-      let inserted = bx1OpenFloppy(h, drv.cint, path.cstring, 0)
-      if inserted != 0:
-        rememberRecent(path)
+    if path.len > 0 and mountFloppy(drv, path, 0):
+      rememberRecent(path)
+
+  proc loadMedia(path: string) =
+    ## Single entry point for anything that can end up mounted: a bare
+    ## image, a 7z/zip archive, or an m3u/m3u8 playlist. Used by drag &
+    ## drop, Recent Files, and the "Open Disk or Archive..." menu item, so
+    ## extension handling lives in exactly one place (archive.classify)
+    ## instead of being re-decided at each call site.
+    var resolved: seq[string]
+    try:
+      resolved = archive.resolveMedia(path)
+    except IOError as e:
+      stderr.writeLine "bubix1turboz: " & e.msg
+      return
+    var drv = 0
+    var mounted = false
+    for p in resolved:
+      case archive.classify(p)
+      of archive.mkTape:
+        if bx1OpenTape(h, p.cstring, 1) != 0:
+          mounted = true
+      of archive.mkFloppy:
+        if drv < 2 and mountFloppy(drv, p, 0):
+          mounted = true
+          inc drv
+      of archive.mkArchive, archive.mkPlaylist, archive.mkUnknown:
+        discard
+    if mounted:
+      # The archive/playlist itself is what the user thinks of as "the
+      # game" and what they will look for again in Recent Files - not
+      # the extracted cache path or an individual disk inside it.
+      rememberRecent(path)
+      bx1Reset(h)
 
   var win: Window
 
@@ -89,20 +159,27 @@ proc main() =
   fileMenu.addItem("Eject Tape", proc (sender: MenuItem, w: Window) =
     bx1CloseTape(h))
   fileMenu.addSeparator()
+  fileMenu.addItem("Open Disk or Archive...", proc (sender: MenuItem, w: Window) =
+    let path = uing.openFile(w)
+    if path.len > 0:
+      loadMedia(path))
+  fileMenu.addSeparator()
   # Fixed slots (not a real submenu - uing/libui-ng menus cannot nest).
   # Titles are rewritten in place via cocoamenu.setMenuItemTitle as the
   # recent list changes; "N. " is the stable prefix used to find them.
-  for i in 0 ..< RecentSlots:
-    let idx = i
-    let label = if idx < recent.len: &"{idx+1}. {recent[idx].extractFilename()}" else: &"{idx+1}. (empty)"
-    fileMenu.addItem(label, proc (sender: MenuItem, w: Window) =
+  # The action is built by a proc, not written inline in the loop body:
+  # a for-loop-scoped `let idx` is one shared binding across every
+  # closure created in that loop, so every slot's callback would silently
+  # fire with whichever index the loop last reached (confirmed with an
+  # isolated repro - every slot opened the same file regardless of which
+  # one was clicked). A proc parameter gets a fresh binding per call.
+  proc makeRecentAction(idx: int): proc (sender: MenuItem, w: Window) =
+    proc (sender: MenuItem, w: Window) =
       if idx < recent.len:
-        let path = recent[idx]
-        let ext = path.splitFile().ext.toLowerAscii()
-        if ext in [".tap", ".cmt", ".t88", ".wav"]:
-          discard bx1OpenTape(h, path.cstring, 1)
-        else:
-          discard bx1OpenFloppy(h, 0, path.cstring, 0))
+        loadMedia(recent[idx])
+  for i in 0 ..< RecentSlots:
+    let label = if i < recent.len: &"{i+1}. {recent[i].extractFilename()}" else: &"{i+1}. (empty)"
+    fileMenu.addItem(label, makeRecentAction(i))
   fileMenu.addSeparator()
   fileMenu.addQuitItem(proc (): bool =
     running = false
@@ -110,6 +187,15 @@ proc main() =
       win.destroy()
       win = nil
     true)
+  # libui-ng places this in the application menu (About BubiX1turboZ)
+  # regardless of which Menu it is added to - like addQuitItem above.
+  # Without an explicit addAboutItem call, libui-ng still shows the
+  # placeholder item but wires no action to it, which Cocoa then reports
+  # as permanently disabled (no target-action pair to validate).
+  fileMenu.addAboutItem(proc (sender: MenuItem, w: Window) =
+    uing.msgBox(w, "BubiX1turboZ " & appVersion,
+      "Multi-platform Sharp X1 turbo Z emulator.\n" &
+      "Emulation core: Common Source Code Project's eX1turboZ (GPL-2.0-or-later)."))
 
   # --- Machine menu ---
   let machineMenu = newMenu "Machine"
@@ -119,6 +205,26 @@ proc main() =
     bx1SpecialReset(h))
   machineMenu.addCheckItem("Pause", proc (sender: MenuItem, w: Window) =
     paused = sender.checked)
+
+  # --- Disk menu (D88 multi-bank picker for drive 1) ---
+  # libui-ng cannot add/remove menu items at runtime (phase 6), and the
+  # bank count is only known after an image is mounted (the core reads it
+  # from the file), so this preallocates fixed slots exactly like Recent
+  # Files above and starts them all disabled; updateDiskMenu() renames
+  # and enables/disables them once drive 1 actually holds a multi-bank
+  # image.
+  let diskMenu = newMenu "Disk"
+  proc makeDiskBankAction(idx: int): proc (sender: MenuItem, w: Window) =
+    # A plain `for`-loop-scoped closure would have every slot's callback
+    # share the *same* `idx` binding (all firing with the loop's final
+    # value - confirmed with an isolated repro while tracking down why
+    # every slot picked the same bank). Wrapping it in a proc call forces
+    # a fresh binding per slot, since `idx` is now a parameter.
+    proc (sender: MenuItem, w: Window) =
+      if driveOnePath.len > 0:
+        discard mountFloppy(0, driveOnePath, idx)
+  for i in 0 ..< DiskSlots:
+    diskMenu.addItem(&"{i+1}. (unused)", makeDiskBankAction(i))
 
   # --- State menu ---
   let stateMenu = newMenu "State"
@@ -144,21 +250,28 @@ proc main() =
   # Resolution") has a pre-existing glyph rendering bug present in the
   # original app too, not something introduced by this port.
   let monitorLabels = ["Monitor: High Resolution", "Monitor: Standard"]
-  for i in 0 ..< 2:
-    let idx = i
-    monitorItems[i] = settingsMenu.addCheckItem(monitorLabels[i], proc (sender: MenuItem, w: Window) =
+  # Wrapped in a proc, not written directly in the loop body below: a
+  # for-loop-scoped `let idx` is still one shared binding across every
+  # closure created in that loop (confirmed with an isolated repro), so
+  # every item would silently apply whichever index the loop ended on.
+  # A proc parameter gets a fresh binding per call instead.
+  proc makeMonitorAction(idx: int): proc (sender: MenuItem, w: Window) =
+    proc (sender: MenuItem, w: Window) =
       bx1SetMonitorType(h, idx.cint)
       for j in 0 ..< 2:
-        monitorItems[j].checked = (j == idx))
+        monitorItems[j].checked = (j == idx)
+  for i in 0 ..< 2:
+    monitorItems[i] = settingsMenu.addCheckItem(monitorLabels[i], makeMonitorAction(i))
   settingsMenu.addSeparator()
   var soundItems: array[3, MenuItem]
   let soundLabels = ["Sound: PSG Only", "Sound: +1 FM Board (CZ-8BS1)", "Sound: +2 FM Boards (CZ-8BS1)"]
-  for i in 0 ..< 3:
-    let idx = i
-    soundItems[i] = settingsMenu.addCheckItem(soundLabels[i], proc (sender: MenuItem, w: Window) =
+  proc makeSoundAction(idx: int): proc (sender: MenuItem, w: Window) =
+    proc (sender: MenuItem, w: Window) =
       bx1SetSoundType(h, idx.cint)
       for j in 0 ..< 3:
-        soundItems[j].checked = (j == idx))
+        soundItems[j].checked = (j == idx)
+  for i in 0 ..< 3:
+    soundItems[i] = settingsMenu.addCheckItem(soundLabels[i], makeSoundAction(i))
   settingsMenu.addSeparator()
   let scanlineItem = settingsMenu.addCheckItem("Scanline Effect", proc (sender: MenuItem, w: Window) =
     # libui-ng check items do not auto-toggle on click - unlike the
@@ -174,10 +287,34 @@ proc main() =
   box.add newLabel("BubiX1turboZ")
   win.child = box
   win.onClosing = proc (sender: Window): bool =
+    # Returning true here segfaulted in testing: uing's onClosingWrapper
+    # (uing.nim) calls `controlDestroy(w.impl)` synchronously whenever
+    # this callback returns true - i.e. it destroys the NSWindow from
+    # inside its own "window should close" delegate callback, which
+    # crashes. (uing's own default onClosing, installed by newWindow
+    # before this overrides it, sidesteps that by calling quitAll()
+    # instead of destroying anything - but quitAll() is Nim's
+    # system.quit(), a hard process exit that would skip
+    # bx1SaveConfig/recentfiles.save below.)
+    #
+    # Returning false tells libui-ng not to touch the window itself;
+    # `running = false` alone drives the same graceful shutdown path as
+    # the SDL window's WindowEvent_Close and the Quit menu item, whose
+    # post-loop cleanup (`if win != nil: win.destroy()`) destroys this
+    # window safely once control has unwound back to plain Nim code,
+    # outside any Cocoa delegate callback.
     running = false
-    win = nil
-    true
+    false
   win.show()
+
+  # A botched NSApp modal session from *any* Open/Save dialog (uing's
+  # openFile/saveFile - reproduced with the stock File > Open Floppy
+  # flow, not specific to phase 7's additions) can otherwise leave every
+  # menu item in the app permanently disabled after first use of a
+  # dialog. See cocoamenu.m's bx1_menu_disable_autoenable_all for the
+  # full mechanism. Must run after win.show() - NSApp has no main menu
+  # before that.
+  cocoamenu.disableAutoEnableAll()
 
   # Reflect the config loaded by bx1_create (either from config.ini or
   # built-in defaults) in the initial checkmarks.
@@ -188,6 +325,7 @@ proc main() =
   if curSound >= 0 and curSound < 3:
     soundItems[curSound].checked = true
   scanlineItem.checked = bx1GetScanLine(h) != 0
+  updateDiskMenu() # disables all slots; nothing is mounted yet
 
   # libui-ng attaches no keyboard shortcuts to any menu item (phase 1.2);
   # wire up the standard macOS ones by hand. Must happen after win.show()
@@ -199,12 +337,17 @@ proc main() =
 
   # Nearest-neighbor scaling: X1 text/graphics are drawn at exact pixel
   # boundaries, and linear filtering (SDL's default for the accelerated
-  # renderer) blurs and distorts character glyphs when the 640x400
-  # texture is stretched to the aspect-corrected window.
+  # renderer) blurs glyphs on any non-integer window resize.
   discard setHint("SDL_RENDER_SCALE_QUALITY", "0")
 
+  # Native 640x400, not the core's own WINDOW_HEIGHT_ASPECT=480 (which
+  # stretches the picture to approximate the X1's non-square CRT pixels,
+  # like the original Windows app's default window does). Per user
+  # feedback the stretched look reads as distorted on a modern display;
+  # this project prioritizes a clean, square-pixel picture over
+  # replicating that CRT-accurate aspect ratio.
   let sdlWin = createWindow("BubiX1turboZ - Screen", SDL_WINDOWPOS_UNDEFINED,
-    SDL_WINDOWPOS_UNDEFINED, ScreenWidth, WindowHeightAspect, SDL_WINDOW_SHOWN)
+    SDL_WINDOWPOS_UNDEFINED, ScreenWidth, WindowHeight, SDL_WINDOW_SHOWN)
   if sdlWin == nil:
     fail "SDL_CreateWindow failed: " & $getError()
   let renderer = createRenderer(sdlWin, -1, Renderer_Accelerated)
@@ -278,6 +421,14 @@ proc main() =
               bx1KeyUp(h, vk)
         else:
           discard
+      of DropFile:
+        # BluePrint line 32: a drop mounts and resets automatically,
+        # unlike the File-menu open actions (which leave a running game
+        # alone in case the user is hot-swapping a disk mid-session).
+        let raw = ev.drop.file
+        if raw != nil:
+          loadMedia($raw)
+          sdlFreeStr(raw)
       else:
         discard
     discard uing.mainStep(0)
@@ -309,9 +460,46 @@ proc main() =
                     cast[pointer](cast[uint](fb) + uint(y * srcStride)), srcStride)
         texture.unlockTexture()
       renderer.clear()
-      renderer.copy(texture, nil, nil)
+      var screenDst = rect(0.cint, 0.cint, ScreenWidth.cint, ScreenHeight.cint)
+      renderer.copy(texture, nil, addr screenDst)
+
+      # Status bar: floppy/tape access lamps drawn directly into the
+      # emulator's own window, not as a separate GUI window - a second
+      # floating window is easy to lose behind the main one (confirmed:
+      # an earlier attempt placed it off-screen and nobody noticed), and
+      # "access lamp" is a literal lamp on a real drive, not a text
+      # label. The data comes straight from the vendored core (no patch
+      # needed): EMU::is_floppy_disk_accessed()/is_tape_playing()/
+      # is_tape_recording() - see docs/dev/DevelopmentPlan.md's phase 7
+      # postscript. No HDD lamp: this app has no UI path to mount a hard
+      # disk (BluePrint/CLAUDE.md - commercial X1 games did not use one),
+      # so it would only ever read as permanently idle.
+      renderer.setDrawColor(20, 20, 20, 255)
+      var barRect = rect(0.cint, ScreenHeight.cint, ScreenWidth.cint, StatusBarHeight.cint)
+      discard renderer.fillRect(addr barRect)
+
+      const
+        lampSize = 12.cint
+        lampY = (ScreenHeight + (StatusBarHeight - lampSize.int) div 2).cint
+        lampPitch = 24.cint
+        idleColor = (60'u8, 60'u8, 60'u8)
+        fddColor = (40'u8, 220'u8, 40'u8)
+        tapeColor = (230'u8, 160'u8, 30'u8)
+      let lamps = [
+        (bx1IsFloppyDiskAccessed(h, 0) != 0, fddColor),
+        (bx1IsFloppyDiskAccessed(h, 1) != 0, fddColor),
+        (bx1IsTapeActive(h) != 0, tapeColor),
+      ]
+      for i in 0 ..< lamps.len:
+        let (isOn, activeColor) = lamps[i]
+        let (r, g, b) = if isOn: activeColor else: idleColor
+        renderer.setDrawColor(r, g, b, 255)
+        var lampRect = rect(8.cint + i.cint * lampPitch, lampY, lampSize, lampSize)
+        discard renderer.fillRect(addr lampRect)
+
       renderer.present()
 
+  stderr.writeLine "bubix1turboz: main loop exited, saving and shutting down"
   bx1SaveConfig(h, paths.configFilePath().cstring)
   recentfiles.save(paths.recentFilesPath(), recent)
 

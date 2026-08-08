@@ -16,6 +16,7 @@ proc bx1MenuSetTitleImpl(menuTitle, itemPrefix, newTitle: cstring): cint
   {.importc: "bx1_menu_set_title", cdecl.}
 proc bx1MenuSetEnabledImpl(menuTitle, itemPrefix: cstring, enabled: cint): cint
   {.importc: "bx1_menu_set_enabled", cdecl.}
+proc bx1MenuDisableAutoenableAllImpl() {.importc: "bx1_menu_disable_autoenable_all", cdecl.}
 
 proc titleArg(menuTitle: string): cstring =
   if menuTitle.len == 0: nil else: menuTitle.cstring
@@ -32,3 +33,12 @@ proc setMenuItemTitle*(menuTitle: string, itemPrefix: string, newTitle: string):
 
 proc setMenuItemEnabled*(menuTitle: string, itemPrefix: string, enabled: bool): bool =
   bx1MenuSetEnabledImpl(titleArg(menuTitle), itemPrefix.cstring, enabled.cint) != 0
+
+proc disableAutoEnableAll*() =
+  ## Must be called once, after the window carrying the menu bar has been
+  ## shown (NSApp has no main menu before that) - see cocoamenu.m for why
+  ## this exists. Call it unconditionally at startup, not just when
+  ## setMenuItemEnabled is used: a broken NSApp modal session from any
+  ## Open/Save dialog can disable every menu item in the app regardless
+  ## of whether this app ever calls setMenuItemEnabled itself.
+  bx1MenuDisableAutoenableAllImpl()
