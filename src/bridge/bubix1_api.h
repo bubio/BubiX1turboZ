@@ -136,6 +136,48 @@ void bx1_close_tape(bx1_handle h);
 int bx1_is_floppy_disk_accessed(bx1_handle h, int drv);
 /// 1 while the tape deck is playing back or recording, 0 otherwise.
 int bx1_is_tape_active(bx1_handle h);
+/// 1 while drive `drv` should show its *second* activity color. The
+/// original Windows status bar picks between two "on" lamp bitmaps with
+/// this (access_on.bmp vs access_green.bmp); the core lights it only for a
+/// drive currently configured as 2HD, so a 2D game never triggers it.
+int bx1_floppy_disk_indicator_color(bx1_handle h, int drv);
+int bx1_is_floppy_disk_inserted(bx1_handle h, int drv);
+int bx1_is_tape_inserted(bx1_handle h);
+/// The deck's own human-readable state, exactly as the original status bar
+/// prints it after "CMT:" - "Play (37 %)", "Stop (End-of-Tape)", "Record",
+/// "APSS Rewind", ... Never NULL; an empty string means no message. The
+/// returned pointer is owned by the core and is only valid until the next
+/// call into the emulator, so copy it before doing anything else.
+const char* bx1_get_tape_message(bx1_handle h);
+
+/// Write protection is a property of the mounted image, not of the drive,
+/// so it resets when a new disk is inserted.
+void bx1_set_floppy_write_protected(bx1_handle h, int drv, int protect);
+int bx1_get_floppy_write_protected(bx1_handle h, int drv);
+/// Emulate the real drive's rotation/seek delays instead of completing
+/// transfers immediately. Needed by copy-protected titles that time the
+/// FDC; costs speed, hence the per-drive switch (config.correct_disk_timing).
+void bx1_set_correct_disk_timing(bx1_handle h, int drv, int enabled);
+int bx1_get_correct_disk_timing(bx1_handle h, int drv);
+/// Treat CRC errors on the medium as valid data (config.ignore_disk_crc).
+/// Some protection schemes store deliberately corrupt sectors.
+void bx1_set_ignore_disk_crc(bx1_handle h, int drv, int enabled);
+int bx1_get_ignore_disk_crc(bx1_handle h, int drv);
+/// media_type: 0 = 2D, 1 = 2DD, 2 = 2HD (mapped to the core's MEDIA_TYPE_*
+/// constants internally). Creates an empty D88 at `path`; does not mount it.
+int bx1_create_blank_floppy_disk(bx1_handle h, const char* path, int media_type);
+
+/// The CMT deck's transport buttons, matching the original's CMT menu.
+void bx1_tape_push_play(bx1_handle h);
+void bx1_tape_push_stop(bx1_handle h);
+void bx1_tape_push_fast_forward(bx1_handle h);
+void bx1_tape_push_fast_rewind(bx1_handle h);
+void bx1_tape_push_apss_forward(bx1_handle h);
+void bx1_tape_push_apss_rewind(bx1_handle h);
+/// Reshape the tape waveform before decoding it (config.wave_shaper), which
+/// recovers data from noisy WAV rips. Irrelevant for clean T77/CMT images.
+void bx1_set_wave_shaper(bx1_handle h, int enabled);
+int bx1_get_wave_shaper(bx1_handle h);
 
 // ----------------------------------------------------------------------
 // State save/load
@@ -145,6 +187,41 @@ int bx1_is_tape_active(bx1_handle h);
 /// -forget (void return) with no success/failure signal of their own.
 int bx1_save_state(bx1_handle h, const char* path);
 int bx1_load_state(bx1_handle h, const char* path);
+/// Path the original app uses for numbered save slot `num` (0-9):
+/// "<base_dir>/X1TURBOZ.sta<num>". Lets the flat State 0-9 menu items work
+/// without a file dialog, exactly like the original's Save/Load State
+/// submenus. Points at a shared static buffer inside the core - copy it.
+const char* bx1_get_state_file_path(bx1_handle h, int num);
+
+// ----------------------------------------------------------------------
+// Speed control
+// ----------------------------------------------------------------------
+
+/// power: 0-4, meaning a CPU clock multiplier of 1/2/4/8/16 (the original's
+/// Control > "CPU x1".."CPU x16"). Not a host frame rate: the VM really
+/// runs that many Z80 cycles per emulated frame.
+void bx1_set_cpu_power(bx1_handle h, int power);
+int bx1_get_cpu_power(bx1_handle h);
+/// Run the VM as fast as the host allows, ignoring the 61.94Hz frame clock.
+void bx1_set_full_speed(bx1_handle h, int enabled);
+int bx1_get_full_speed(bx1_handle h);
+/// Re-check device timing at every M1/read/write cycle instead of once per
+/// scheduled event. More accurate, considerably slower.
+void bx1_set_drive_vm_in_opecode(bx1_handle h, int enabled);
+int bx1_get_drive_vm_in_opecode(bx1_handle h);
+
+// ----------------------------------------------------------------------
+// Auto key (the original's Control > Paste / Stop / Romaji to Kana)
+// ----------------------------------------------------------------------
+
+/// Types `text` into the guest as if on the real keyboard. `text` must be
+/// plain ASCII/JIS X 0201; the core drops anything it cannot map.
+void bx1_start_auto_key(bx1_handle h, const char* text);
+void bx1_stop_auto_key(bx1_handle h);
+int bx1_is_auto_key_running(bx1_handle h);
+/// Convert romaji in pasted text to kana keystrokes (config.romaji_to_kana).
+void bx1_set_romaji_to_kana(bx1_handle h, int enabled);
+int bx1_get_romaji_to_kana(bx1_handle h);
 
 // ----------------------------------------------------------------------
 // Configuration
@@ -164,6 +241,35 @@ void bx1_set_volume(bx1_handle h, int device, int decibel_l, int decibel_r);
 /// duplicating it, approximating a CRT's scanline gaps.
 void bx1_set_scan_line(bx1_handle h, int enabled);
 int bx1_get_scan_line(bx1_handle h);
+/// USE_DRIVE_TYPE: which device the IPL tries to boot from. Reaches the
+/// guest as DIP switch bits 1-3 of I/O port 0x1ff0, so it only takes effect
+/// on the next reset. 0 = 2D, 1 = 2DD, 2 = 2HD, 6 = 8-inch 1S.
+void bx1_set_drive_type(bx1_handle h, int type);
+int bx1_get_drive_type(bx1_handle h);
+/// USE_KEYBOARD_TYPE: 0 = mode A, 1 = mode B (the X1's physical keyboard
+/// mode switch, which changes how some keys are reported).
+void bx1_set_keyboard_type(bx1_handle h, int type);
+int bx1_get_keyboard_type(bx1_handle h);
+/// Mechanical/analog sounds mixed in alongside the PSG and FM channels:
+/// the drive's seek noise, the tape motor, the raw FSK signal, and any
+/// voice track on the tape.
+void bx1_set_sound_noise_fdd(bx1_handle h, int enabled);
+int bx1_get_sound_noise_fdd(bx1_handle h);
+void bx1_set_sound_noise_cmt(bx1_handle h, int enabled);
+int bx1_get_sound_noise_cmt(bx1_handle h);
+void bx1_set_sound_tape_signal(bx1_handle h, int enabled);
+int bx1_get_sound_tape_signal(bx1_handle h);
+void bx1_set_sound_tape_voice(bx1_handle h, int enabled);
+int bx1_get_sound_tape_voice(bx1_handle h);
+
+/// Number of independently mixable sound sources (USE_SOUND_VOLUME = 7 for
+/// X1turboZ) and their display names ("PSG", "CZ-8BS1 #1", "Noise (FDD)",
+/// ...). Both are compile-time constants of the core, hence no handle.
+int bx1_get_sound_volume_count(void);
+const char* bx1_get_sound_device_caption(int index);
+/// Volumes are in decibels, clamped by the core to [-40, 0].
+int bx1_get_volume_l(bx1_handle h, int device);
+int bx1_get_volume_r(bx1_handle h, int device);
 
 #ifdef __cplusplus
 }

@@ -12,6 +12,9 @@
 #include "../core/emu.h"
 #include "../core/config.h"
 #include "../core/common.h"
+// For MEDIA_TYPE_* (the D88 header's own media byte), used by
+// bx1_create_blank_floppy_disk. emu.h does not pull this in.
+#include "../core/vm/disk.h"
 
 namespace {
 inline EMU* emu_of(bx1_handle h)
@@ -227,6 +230,130 @@ int bx1_is_tape_active(bx1_handle h)
 	return (emu->is_tape_playing(0) || emu->is_tape_recording(0)) ? 1 : 0;
 }
 
+int bx1_floppy_disk_indicator_color(bx1_handle h, int drv)
+{
+	return (emu_of(h)->floppy_disk_indicator_color() & (1u << drv)) ? 1 : 0;
+}
+
+int bx1_is_floppy_disk_inserted(bx1_handle h, int drv)
+{
+	return emu_of(h)->is_floppy_disk_inserted(drv) ? 1 : 0;
+}
+
+int bx1_is_tape_inserted(bx1_handle h)
+{
+	return emu_of(h)->is_tape_inserted(0) ? 1 : 0;
+}
+
+const char* bx1_get_tape_message(bx1_handle h)
+{
+	const _TCHAR* msg = emu_of(h)->get_tape_message(0);
+	return msg != NULL ? msg : "";
+}
+
+void bx1_set_floppy_write_protected(bx1_handle h, int drv, int protect)
+{
+	// EMU overloads this name on the argument list: one setter taking
+	// (drv, bool) and one getter taking (drv). Spelling out the bool keeps
+	// the intended overload unambiguous.
+	emu_of(h)->is_floppy_disk_protected(drv, protect != 0);
+}
+
+int bx1_get_floppy_write_protected(bx1_handle h, int drv)
+{
+	return emu_of(h)->is_floppy_disk_protected(drv) ? 1 : 0;
+}
+
+void bx1_set_correct_disk_timing(bx1_handle h, int drv, int enabled)
+{
+	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
+		return;
+	}
+	config.correct_disk_timing[drv] = (enabled != 0);
+	emu_of(h)->update_config();
+}
+
+int bx1_get_correct_disk_timing(bx1_handle h, int drv)
+{
+	(void)h;
+	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
+		return 0;
+	}
+	return config.correct_disk_timing[drv] ? 1 : 0;
+}
+
+void bx1_set_ignore_disk_crc(bx1_handle h, int drv, int enabled)
+{
+	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
+		return;
+	}
+	config.ignore_disk_crc[drv] = (enabled != 0);
+	emu_of(h)->update_config();
+}
+
+int bx1_get_ignore_disk_crc(bx1_handle h, int drv)
+{
+	(void)h;
+	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
+		return 0;
+	}
+	return config.ignore_disk_crc[drv] ? 1 : 0;
+}
+
+int bx1_create_blank_floppy_disk(bx1_handle h, const char* path, int media_type)
+{
+	// The core takes the D88 header's own encoding (0x00/0x10/0x20) rather
+	// than a dense index; keep the bridge's argument dense so callers do
+	// not have to know the on-disk format.
+	static const uint8_t types[] = { MEDIA_TYPE_2D, MEDIA_TYPE_2DD, MEDIA_TYPE_2HD };
+	if(media_type < 0 || media_type >= (int)(sizeof(types) / sizeof(types[0]))) {
+		return 0;
+	}
+	return emu_of(h)->create_blank_floppy_disk(path, types[media_type]) ? 1 : 0;
+}
+
+void bx1_tape_push_play(bx1_handle h)
+{
+	emu_of(h)->push_play(0);
+}
+
+void bx1_tape_push_stop(bx1_handle h)
+{
+	emu_of(h)->push_stop(0);
+}
+
+void bx1_tape_push_fast_forward(bx1_handle h)
+{
+	emu_of(h)->push_fast_forward(0);
+}
+
+void bx1_tape_push_fast_rewind(bx1_handle h)
+{
+	emu_of(h)->push_fast_rewind(0);
+}
+
+void bx1_tape_push_apss_forward(bx1_handle h)
+{
+	emu_of(h)->push_apss_forward(0);
+}
+
+void bx1_tape_push_apss_rewind(bx1_handle h)
+{
+	emu_of(h)->push_apss_rewind(0);
+}
+
+void bx1_set_wave_shaper(bx1_handle h, int enabled)
+{
+	config.wave_shaper[0] = (enabled != 0);
+	emu_of(h)->update_config();
+}
+
+int bx1_get_wave_shaper(bx1_handle h)
+{
+	(void)h;
+	return config.wave_shaper[0] ? 1 : 0;
+}
+
 int bx1_save_state(bx1_handle h, const char* path)
 {
 	emu_of(h)->save_state(path);
@@ -237,6 +364,88 @@ int bx1_load_state(bx1_handle h, const char* path)
 {
 	emu_of(h)->load_state(path);
 	return 1;
+}
+
+const char* bx1_get_state_file_path(bx1_handle h, int num)
+{
+	return emu_of(h)->state_file_path(num);
+}
+
+void bx1_set_cpu_power(bx1_handle h, int power)
+{
+	// EMU reads config.cpu_power on every run() to size the emulated frame,
+	// so unlike most config fields this one needs no update_config().
+	(void)h;
+	config.cpu_power = power;
+}
+
+int bx1_get_cpu_power(bx1_handle h)
+{
+	(void)h;
+	return config.cpu_power;
+}
+
+void bx1_set_full_speed(bx1_handle h, int enabled)
+{
+	(void)h;
+	config.full_speed = (enabled != 0);
+}
+
+int bx1_get_full_speed(bx1_handle h)
+{
+	(void)h;
+	return config.full_speed ? 1 : 0;
+}
+
+void bx1_set_drive_vm_in_opecode(bx1_handle h, int enabled)
+{
+	config.drive_vm_in_opecode = (enabled != 0);
+	emu_of(h)->update_config();
+}
+
+int bx1_get_drive_vm_in_opecode(bx1_handle h)
+{
+	(void)h;
+	return config.drive_vm_in_opecode ? 1 : 0;
+}
+
+void bx1_start_auto_key(bx1_handle h, const char* text)
+{
+	if(text == NULL || text[0] == '\0') {
+		return;
+	}
+	EMU* emu = emu_of(h);
+	// set_auto_key_list() takes a non-const buffer because it rewrites the
+	// text in place while mapping characters to key codes; hand it a copy
+	// rather than casting away const on the caller's string.
+	int len = (int)strlen(text);
+	char* buf = new char[len + 1];
+	memcpy(buf, text, len + 1);
+	emu->set_auto_key_list(buf, len);
+	delete[] buf;
+	emu->start_auto_key();
+}
+
+void bx1_stop_auto_key(bx1_handle h)
+{
+	emu_of(h)->stop_auto_key();
+}
+
+int bx1_is_auto_key_running(bx1_handle h)
+{
+	return emu_of(h)->is_auto_key_running() ? 1 : 0;
+}
+
+void bx1_set_romaji_to_kana(bx1_handle h, int enabled)
+{
+	(void)h;
+	config.romaji_to_kana = (enabled != 0);
+}
+
+int bx1_get_romaji_to_kana(bx1_handle h)
+{
+	(void)h;
+	return config.romaji_to_kana ? 1 : 0;
 }
 
 void bx1_set_monitor_type(bx1_handle h, int type)
@@ -278,4 +487,107 @@ int bx1_get_scan_line(bx1_handle h)
 {
 	(void)h;
 	return config.scan_line ? 1 : 0;
+}
+
+void bx1_set_drive_type(bx1_handle h, int type)
+{
+	config.drive_type = type;
+	emu_of(h)->update_config();
+}
+
+int bx1_get_drive_type(bx1_handle h)
+{
+	(void)h;
+	return config.drive_type;
+}
+
+void bx1_set_keyboard_type(bx1_handle h, int type)
+{
+	config.keyboard_type = type;
+	emu_of(h)->update_config();
+}
+
+int bx1_get_keyboard_type(bx1_handle h)
+{
+	(void)h;
+	return config.keyboard_type;
+}
+
+void bx1_set_sound_noise_fdd(bx1_handle h, int enabled)
+{
+	config.sound_noise_fdd = (enabled != 0);
+	emu_of(h)->update_config();
+}
+
+int bx1_get_sound_noise_fdd(bx1_handle h)
+{
+	(void)h;
+	return config.sound_noise_fdd ? 1 : 0;
+}
+
+void bx1_set_sound_noise_cmt(bx1_handle h, int enabled)
+{
+	config.sound_noise_cmt = (enabled != 0);
+	emu_of(h)->update_config();
+}
+
+int bx1_get_sound_noise_cmt(bx1_handle h)
+{
+	(void)h;
+	return config.sound_noise_cmt ? 1 : 0;
+}
+
+void bx1_set_sound_tape_signal(bx1_handle h, int enabled)
+{
+	config.sound_tape_signal = (enabled != 0);
+	emu_of(h)->update_config();
+}
+
+int bx1_get_sound_tape_signal(bx1_handle h)
+{
+	(void)h;
+	return config.sound_tape_signal ? 1 : 0;
+}
+
+void bx1_set_sound_tape_voice(bx1_handle h, int enabled)
+{
+	config.sound_tape_voice = (enabled != 0);
+	emu_of(h)->update_config();
+}
+
+int bx1_get_sound_tape_voice(bx1_handle h)
+{
+	(void)h;
+	return config.sound_tape_voice ? 1 : 0;
+}
+
+int bx1_get_sound_volume_count(void)
+{
+	return USE_SOUND_VOLUME;
+}
+
+const char* bx1_get_sound_device_caption(int index)
+{
+	if(index < 0 || index >= USE_SOUND_VOLUME) {
+		return "";
+	}
+	return sound_device_caption[index];
+}
+
+int bx1_get_volume_l(bx1_handle h, int device)
+{
+	(void)h;
+	if(device < 0 || device >= USE_SOUND_VOLUME) {
+		return 0;
+	}
+	return config.sound_volume_l[device];
+}
+
+int bx1_get_volume_r(bx1_handle h, int device)
+{
+	(void)h;
+	if(device < 0 || device >= USE_SOUND_VOLUME) {
+		return 0;
+	}
+	return config.sound_volume_r[device];
 }
