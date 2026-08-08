@@ -187,11 +187,6 @@ int bx1_get_wave_shaper(bx1_handle h);
 /// -forget (void return) with no success/failure signal of their own.
 int bx1_save_state(bx1_handle h, const char* path);
 int bx1_load_state(bx1_handle h, const char* path);
-/// Path the original app uses for numbered save slot `num` (0-9):
-/// "<base_dir>/X1TURBOZ.sta<num>". Lets the flat State 0-9 menu items work
-/// without a file dialog, exactly like the original's Save/Load State
-/// submenus. Points at a shared static buffer inside the core - copy it.
-const char* bx1_get_state_file_path(bx1_handle h, int num);
 
 // ----------------------------------------------------------------------
 // Speed control

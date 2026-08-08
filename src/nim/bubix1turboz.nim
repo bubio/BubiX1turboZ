@@ -31,6 +31,8 @@ import bubix1/cocoamenu
 import bubix1/recentfiles
 import bubix1/archive
 import bubix1/ankfont
+import bubix1/nativemenu
+import bubix1/clipboard
 
 const
   ScreenWidth = 640
@@ -72,7 +74,6 @@ proc main() =
     fail "bx1_create failed (place BIOS ROMs in " & paths.romsDir() & ")"
   var recent = recentfiles.load(paths.recentFilesPath())
   var running = true
-  var paused = false
 
   proc rememberRecent(path: string) =
     recent = recentfiles.pushFront(recent, path)
@@ -198,15 +199,6 @@ proc main() =
       "Multi-platform Sharp X1 turbo Z emulator.\n" &
       "Emulation core: Common Source Code Project's eX1turboZ (GPL-2.0-or-later)."))
 
-  # --- Machine menu ---
-  let machineMenu = newMenu "Machine"
-  machineMenu.addItem("Reset", proc (sender: MenuItem, w: Window) =
-    bx1Reset(h))
-  machineMenu.addItem("Special Reset (NEW ON)", proc (sender: MenuItem, w: Window) =
-    bx1SpecialReset(h))
-  machineMenu.addCheckItem("Pause", proc (sender: MenuItem, w: Window) =
-    paused = sender.checked)
-
   # --- Disk menu (D88 multi-bank picker for drive 1) ---
   # libui-ng cannot add/remove menu items at runtime (phase 6), and the
   # bank count is only known after an image is mounted (the core reads it
@@ -226,17 +218,6 @@ proc main() =
         discard mountFloppy(0, driveOnePath, idx)
   for i in 0 ..< DiskSlots:
     diskMenu.addItem(&"{i+1}. (unused)", makeDiskBankAction(i))
-
-  # --- State menu ---
-  let stateMenu = newMenu "State"
-  stateMenu.addItem("Save State...", proc (sender: MenuItem, w: Window) =
-    let path = uing.saveFile(w)
-    if path.len > 0:
-      discard bx1SaveState(h, path.cstring))
-  stateMenu.addItem("Load State...", proc (sender: MenuItem, w: Window) =
-    let path = uing.openFile(w)
-    if path.len > 0:
-      discard bx1LoadState(h, path.cstring))
 
   # --- Settings menu ---
   # Manual "radio button" behavior: each group is a set of check items
@@ -317,6 +298,84 @@ proc main() =
   # before that.
   cocoamenu.disableAutoEnableAll()
 
+  # --- Control menu (built natively; see nativemenu.nim) ---
+  # Item order, wording and grouping follow the original eX1turboZ's own
+  # Control menu (src/res/x1turboz.rc), minus what this port does not have:
+  # the three "Debug ... CPU" items and "Close Debugger" (the core's
+  # debugger console API is stubbed out here, and a menu that does nothing
+  # is worse than no menu), and "Exit" (libui-ng puts Quit in the
+  # application menu, where macOS expects it).
+  let controlMenu = nativemenu.addMenu("Control")
+  controlMenu.addItem("Reset", proc () = bx1Reset(h), key = "r")
+  # The original labels special_reset() "NMI" for this machine; on the X1
+  # turbo it is the front-panel NMI button, which is also how a NEW ON
+  # reset is triggered.
+  controlMenu.addItem("NMI", proc () = bx1SpecialReset(h))
+  controlMenu.addSeparator()
+
+  # CPU speed multiplier: a radio group, so each item clears the others.
+  var cpuItems: array[5, MenuItemRef]
+  proc syncCpuItems() =
+    let cur = bx1GetCpuPower(h)
+    for i in 0 ..< cpuItems.len:
+      cpuItems[i].checked = (i.cint == cur)
+  proc makeCpuAction(idx: int): MenuAction =
+    result = proc () =
+      bx1SetCpuPower(h, idx.cint)
+      syncCpuItems()
+  for i, label in ["CPU x1", "CPU x2", "CPU x4", "CPU x8", "CPU x16"]:
+    cpuItems[i] = controlMenu.addItem(label, makeCpuAction(i))
+  let fullSpeedItem = controlMenu.addItem("Full Speed")
+  let driveVmItem = controlMenu.addItem("Drive VM in M1/R/W Cycle")
+  controlMenu.addSeparator()
+
+  controlMenu.addItem("Paste", proc () =
+    # The original pastes the clipboard through the core's auto key, which
+    # replays it as real keystrokes rather than injecting text - so it
+    # works with any program running in the guest.
+    let text = clipboard.getText()
+    if text.len > 0:
+      bx1StartAutoKey(h, text.cstring), key = "v")
+  controlMenu.addItem("Stop", proc () = bx1StopAutoKey(h))
+  let romajiItem = controlMenu.addItem("Romaji to Kana")
+  controlMenu.addSeparator()
+
+  # Numbered state slots, exactly like the original's two submenus - no
+  # file dialog, just ten fixed files. The core's own state_file_path()
+  # would put them next to the ROMs (its single base_dir); BluePrint calls
+  # for platform-conventional locations instead, so the slot path is built
+  # here against paths.statesDir() while keeping the original's file naming.
+  let saveStateMenu = controlMenu.addSubmenu("Save State")
+  let loadStateMenu = controlMenu.addSubmenu("Load State")
+  proc stateSlotPath(slot: int): string =
+    paths.statesDir() / ("x1turboz.sta" & $slot)
+  proc makeSaveStateAction(slot: int): MenuAction =
+    result = proc () = discard bx1SaveState(h, stateSlotPath(slot).cstring)
+  proc makeLoadStateAction(slot: int): MenuAction =
+    result = proc () =
+      if fileExists(stateSlotPath(slot)):
+        discard bx1LoadState(h, stateSlotPath(slot).cstring)
+  for slot in 0 .. 9:
+    saveStateMenu.addItem("State " & $slot, makeSaveStateAction(slot))
+    loadStateMenu.addItem("State " & $slot, makeLoadStateAction(slot))
+
+  # These three are plain toggles rather than radio groups, so they have to
+  # flip their own state - AppKit does not do it for a target/action item.
+  # Assigned after creation because each closure refers to its own item.
+  fullSpeedItem.checked = bx1GetFullSpeed(h) != 0
+  driveVmItem.checked = bx1GetDriveVmInOpecode(h) != 0
+  romajiItem.checked = bx1GetRomajiToKana(h) != 0
+  nativemenu.setAction(fullSpeedItem, proc () =
+    fullSpeedItem.checked = not fullSpeedItem.checked
+    bx1SetFullSpeed(h, fullSpeedItem.checked.cint))
+  nativemenu.setAction(driveVmItem, proc () =
+    driveVmItem.checked = not driveVmItem.checked
+    bx1SetDriveVmInOpecode(h, driveVmItem.checked.cint))
+  nativemenu.setAction(romajiItem, proc () =
+    romajiItem.checked = not romajiItem.checked
+    bx1SetRomajiToKana(h, romajiItem.checked.cint))
+  syncCpuItems()
+
   # Reflect the config loaded by bx1_create (either from config.ini or
   # built-in defaults) in the initial checkmarks.
   let curMonitor = bx1GetMonitorType(h)
@@ -332,9 +391,6 @@ proc main() =
   # wire up the standard macOS ones by hand. Must happen after win.show()
   # - NSApp has no main menu before that.
   discard cocoamenu.setMenuShortcut("", "Quit", "q")
-  discard cocoamenu.setMenuShortcut("Machine", "Reset", "r")
-  discard cocoamenu.setMenuShortcut("State", "Save State", "s")
-  discard cocoamenu.setMenuShortcut("State", "Load State", "l")
 
   # Nearest-neighbor scaling: X1 text/graphics are drawn at exact pixel
   # boundaries, and linear filtering (SDL's default for the accelerated
@@ -456,15 +512,14 @@ proc main() =
     # Audio-clock-driven pacing (docs/dev/DevelopmentPlan.md architecture
     # decision 4): keep advancing the VM while the ring buffer the SDL
     # callback drains from is below the target latency.
-    if not paused:
-      runFrameSafetyCounter = 0
-      while bx1GetBufferedAudioFrames(h) < targetBufferedFrames:
-        discard bx1RunFrame(h)
-        inc runFrameSafetyCounter
-        if runFrameSafetyCounter > 1000:
-          # Should be unreachable in normal operation; bail out rather than
-          # freeze the UI if the VM ever stops producing audio progress.
-          break
+    runFrameSafetyCounter = 0
+    while bx1GetBufferedAudioFrames(h) < targetBufferedFrames:
+      discard bx1RunFrame(h)
+      inc runFrameSafetyCounter
+      if runFrameSafetyCounter > 1000:
+        # Should be unreachable in normal operation; bail out rather than
+        # freeze the UI if the VM ever stops producing audio progress.
+        break
 
     # Drawing runs on its own clock rather than "once per pass through this
     # loop". Neither of the obvious alternatives works: presenting every
@@ -486,11 +541,7 @@ proc main() =
         # catching up would mean a burst of back-to-back presents. Resync
         # to now instead.
         nextDrawTicks = frameTicks.float + FrameIntervalMs
-      # Presenting continues while paused (the guest's last frame stays on
-      # screen and the status bar stays live); only the VM's own rendering
-      # stops, since there is nothing new for it to draw.
-      if not paused:
-        bx1DrawScreen(h)
+      bx1DrawScreen(h)
       var pixels: pointer
       var pitch: cint
       if texture.lockTexture(nil, addr pixels, addr pitch):

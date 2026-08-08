@@ -366,11 +366,6 @@ int bx1_load_state(bx1_handle h, const char* path)
 	return 1;
 }
 
-const char* bx1_get_state_file_path(bx1_handle h, int num)
-{
-	return emu_of(h)->state_file_path(num);
-}
-
 void bx1_set_cpu_power(bx1_handle h, int power)
 {
 	// EMU reads config.cpu_power on every run() to size the emulated frame,

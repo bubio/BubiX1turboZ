@@ -91,8 +91,6 @@ proc bx1GetWaveShaper*(h: Bx1Handle): cint {.importc: "bx1_get_wave_shaper", bx1
 
 proc bx1SaveState*(h: Bx1Handle, path: cstring): cint {.importc: "bx1_save_state", bx1.}
 proc bx1LoadState*(h: Bx1Handle, path: cstring): cint {.importc: "bx1_load_state", bx1.}
-proc bx1GetStateFilePath*(h: Bx1Handle, num: cint): cstring
-  {.importc: "bx1_get_state_file_path", bx1.}
 
 proc bx1SetCpuPower*(h: Bx1Handle, power: cint) {.importc: "bx1_set_cpu_power", bx1.}
 proc bx1GetCpuPower*(h: Bx1Handle): cint {.importc: "bx1_get_cpu_power", bx1.}
