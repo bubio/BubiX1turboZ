@@ -4,7 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## リポジトリの現状
 
-**このリポジトリはまだスキャフォールド前です。** 現時点で存在するのは `docs/dev/BluePrint.md` のみで、ソースコード・ビルド設定・Git リポジトリのいずれも未作成です。したがって build / lint / test コマンドは**まだ存在しません**。存在しないコマンドを推測して実行・記載しないでください。
+**このリポジトリはまだスキャフォールド前です（フェーズ 1 まで完了、フェーズ 2 が未着手）。** `src/` も `.nimble` もまだ無く、したがって build / lint / test コマンドは**まだ存在しません**。存在しないコマンドを推測して実行・記載しないでください。
+
+現時点の構成:
+
+| パス | 追跡 | 内容 |
+|---|---|---|
+| `CLAUDE.md`, `mise.toml`, `.gitignore` | ✅ | Git 管理下にあるのはこの 3 つだけ |
+| `docs/dev/` | ❌ | `BluePrint.md`（仕様）と `DevelopmentPlan.md`（計画・調査結果） |
+| `spike/` | ❌ | フェーズ 1 の検証コードと成果物 |
+
+**`spike/` には既に再利用すべき成果物があります。**フェーズ 1.4 で C++ コアの試験コンパイルまで済んでおり、`spike/core/src/sdl/osd.h`（OSD 宣言）、`spike/core/src/compat/vkcodes.h`、`spike/core-patches/*.patch`（オリジナルへのパッチ 6 ファイル分）、`spike/build_core.sh` が揃っています。フェーズ 2 のベンダリングではこれらを `src/` に移すだけで済みます。**ゼロから作り直さないでください。**
 
 作業前に必ず以下の 2 つを読んでください。
 
