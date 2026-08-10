@@ -93,6 +93,15 @@ proc main() =
   # is built before the SDL window exists but its actions drive both.
   var hostCfg = hostconfig.load(paths.hostConfigPath())
   var showStatusBar = hostCfg.getBool("ShowStatusBar", true)
+  # Full Speed is a host-loop concept, not a core setting: config.full_speed
+  # has no reader anywhere in the vendored core (the original's winmain.cpp
+  # is the only thing that reads it). It still round-trips through the core's
+  # config so it persists in config.ini like the original's does.
+  var fullSpeed = false
+  var skipFrames = 0
+  # Set once the Control menu exists, so the status timer can re-sync the
+  # one setting the core clears behind our back (see below).
+  var romajiItemRef = MenuItemRef(tag: 0)
   var sdlWin: WindowPtr = nil
   var renderer: RendererPtr = nil
 
@@ -343,6 +352,7 @@ proc main() =
       bx1StartAutoKey(h, text.cstring), key = "v")
   controlMenu.addItem("Stop", proc () = bx1StopAutoKey(h))
   let romajiItem = controlMenu.addItem("Romaji to Kana")
+  romajiItemRef = romajiItem
   controlMenu.addSeparator()
 
   # Numbered state slots, exactly like the original's two submenus - no
@@ -367,12 +377,15 @@ proc main() =
   # These three are plain toggles rather than radio groups, so they have to
   # flip their own state - AppKit does not do it for a target/action item.
   # Assigned after creation because each closure refers to its own item.
-  fullSpeedItem.checked = bx1GetFullSpeed(h) != 0
+  fullSpeed = bx1GetFullSpeed(h) != 0
+  fullSpeedItem.checked = fullSpeed
   driveVmItem.checked = bx1GetDriveVmInOpecode(h) != 0
   romajiItem.checked = bx1GetRomajiToKana(h) != 0
   nativemenu.setAction(fullSpeedItem, proc () =
     fullSpeedItem.checked = not fullSpeedItem.checked
-    bx1SetFullSpeed(h, fullSpeedItem.checked.cint))
+    fullSpeed = fullSpeedItem.checked
+    skipFrames = 0
+    bx1SetFullSpeed(h, fullSpeed.cint))
   nativemenu.setAction(driveVmItem, proc () =
     driveVmItem.checked = not driveVmItem.checked
     bx1SetDriveVmInOpecode(h, driveVmItem.checked.cint))
@@ -715,9 +728,6 @@ proc main() =
     stderr.writeLine "bubix1turboz: no 8x8 font ROM in " & paths.romsDir() &
       "; status bar text disabled"
 
-  uing.mainSteps()
-
-  var ev = sdl2.defaultEvent
   var runFrameSafetyCounter = 0
   var tapeStatus = ""
   var fpsDisplay = 0
@@ -725,11 +735,100 @@ proc main() =
   var lastFpsTicks = getTicks()
   var lastStatusTicks = lastFpsTicks
   const StatusPollMs = 200'u32
+  # How long one Full Speed pass may run the VM before returning to the
+  # event pump. Long enough that the per-pass overhead is negligible, short
+  # enough that menus and keyboard stay responsive.
+  const FullSpeedBatchMs = 8'u32
   # X1turboZ runs at FRAMES_PER_SEC 61.94 (vm/x1/x1.h), which is not a whole
   # number of milliseconds - hence a float accumulator rather than an
   # integer interval, so the error does not compound into visible drift.
   const FrameIntervalMs = 1000.0 / 61.94
   var nextDrawTicks = lastFpsTicks.float
+
+  proc drawFrame() =
+    ## Renders one frame of the guest's screen plus the status bar.
+    bx1DrawScreen(h)
+    var pixels: pointer
+    var pitch: cint
+    if texture.lockTexture(nil, addr pixels, addr pitch):
+      let fb = bx1GetFramebuffer(h)
+      let srcStride = ScreenWidth * 4
+      if pitch.int == srcStride:
+        copyMem(pixels, fb, ScreenHeight * srcStride)
+      else:
+        for y in 0 ..< ScreenHeight:
+          copyMem(cast[pointer](cast[uint](pixels) + uint(y * pitch.int)),
+                  cast[pointer](cast[uint](fb) + uint(y * srcStride)), srcStride)
+      texture.unlockTexture()
+    renderer.clear()
+    var screenDst = rect(0.cint, 0.cint, ScreenWidth.cint, ScreenHeight.cint)
+    renderer.copy(texture, nil, addr screenDst)
+
+    # Status bar: drawn directly into the emulator's own window, not as a
+    # separate GUI window - a second floating window is easy to lose
+    # behind the main one (confirmed: an earlier attempt placed it
+    # off-screen and nobody noticed). Layout and wording mirror the
+    # original Windows app's own status bar (winmain.cpp's
+    # update_status_bar): "FD:" followed by one lamp per drive, a gap,
+    # then "CMT:" and the deck's own message string. All of it comes
+    # from the vendored core unmodified. No HDD section: this app has no
+    # UI path to mount a hard disk (BluePrint/CLAUDE.md - commercial X1
+    # games did not use one), so it would only ever read as idle.
+    #
+    # The one deliberate departure from the original: the frame rate.
+    # The original puts it in the window title ("%s - %d fps (%d %%)");
+    # here it sits at the right end of the bar instead, where a title
+    # bar the user may not be looking at cannot hide it.
+    if showStatusBar:
+      renderer.setDrawColor(20, 20, 20, 255)
+      var barRect = rect(0.cint, ScreenHeight.cint, ScreenWidth.cint, StatusBarHeight.cint)
+      discard renderer.fillRect(addr barRect)
+
+      const
+        lampW = 14.cint # the original's indicator bitmaps are 14x12
+        lampH = 12.cint
+        lampY = (ScreenHeight + (StatusBarHeight - lampH.int) div 2).cint
+        textY = (ScreenHeight + (StatusBarHeight - ankfont.GlyphHeight) div 2).cint
+        labelColor = (200'u8, 200'u8, 200'u8)
+        # Three lamp states, matching the original's access_off /
+        # access_on / access_green bitmaps. The third is selected by
+        # floppy_disk_indicator_color(), which the core raises only for a
+        # drive currently configured as 2HD - so a 2D game legitimately
+        # never shows it.
+        lampOff = (60'u8, 60'u8, 60'u8)
+        lampOn = (230'u8, 60'u8, 50'u8)
+        lampOn2 = (60'u8, 220'u8, 70'u8)
+        tapeOn = (230'u8, 160'u8, 30'u8)
+
+      var x = 6.cint
+      x = font.draw(renderer, x, textY, "FD:", labelColor[0], labelColor[1], labelColor[2])
+      x += 4
+      for drv in 0 ..< FloppyDrives:
+        let (r, g, b) =
+          if bx1IsFloppyDiskAccessed(h, drv.cint) == 0: lampOff
+          elif bx1FloppyDiskIndicatorColor(h, drv.cint) != 0: lampOn2
+          else: lampOn
+        renderer.setDrawColor(r, g, b, 255)
+        var lampRect = rect(x, lampY, lampW, lampH)
+        discard renderer.fillRect(addr lampRect)
+        x += lampW + 2
+      x += 8
+
+      x = font.draw(renderer, x, textY, "CMT:", labelColor[0], labelColor[1], labelColor[2])
+      x += 4
+      let (tr, tg, tb) = if bx1IsTapeActive(h) != 0: tapeOn else: labelColor
+      font.draw(renderer, x, textY, tapeStatus, tr, tg, tb)
+
+      let fpsText = $fpsDisplay & " fps"
+      font.draw(renderer, ScreenWidth.cint - font.width(fpsText) - 6, textY, fpsText,
+        labelColor[0], labelColor[1], labelColor[2])
+
+    renderer.present()
+    inc drawnFrames
+
+  uing.mainSteps()
+
+  var ev = sdl2.defaultEvent
   while running:
     # Invariant 2: SDL first, then libui.
     while pollEvent(ev):
@@ -769,116 +868,60 @@ proc main() =
         discard
     discard uing.mainStep(0)
 
-    # Audio-clock-driven pacing (docs/dev/DevelopmentPlan.md architecture
-    # decision 4): keep advancing the VM while the ring buffer the SDL
-    # callback drains from is below the target latency.
+    # Advance the VM. Normally this is paced by the audio ring buffer
+    # (docs/dev/DevelopmentPlan.md architecture decision 4): keep running
+    # frames while the buffer the SDL callback drains from is below the
+    # target latency. Full Speed removes that limiter.
     runFrameSafetyCounter = 0
-    while bx1GetBufferedAudioFrames(h) < targetBufferedFrames:
-      discard bx1RunFrame(h)
-      inc runFrameSafetyCounter
-      if runFrameSafetyCounter > 1000:
-        # Should be unreachable in normal operation; bail out rather than
-        # freeze the UI if the VM ever stops producing audio progress.
-        break
-
-    # Drawing runs on its own clock rather than "once per pass through this
-    # loop". Neither of the obvious alternatives works: presenting every
-    # pass spins as fast as the GPU accepts frames (measured ~170/sec on a
-    # 61.94Hz machine, burning a core to show nothing new), and presenting
-    # only when the VM advanced gives ~10/sec, because the pacing loop above
-    # advances the VM in bursts - the core synthesizes a whole sound_latency
-    # window (100ms, ~6 frames) per create_sound call, then nothing until
-    # the ring buffer drains. Pacing here on wall time decouples the two,
-    # which is also how the original app works (its VM is paced by the
-    # DirectSound cursor while WM_PAINT redraws on its own timer).
-    let frameTicks = getTicks()
-    if frameTicks.float < nextDrawTicks:
-      delay(1)
+    if fullSpeed:
+      # The original's Full Speed is not "run the VM faster" as such: it
+      # forces winmain.cpp's frame-skip path, which stops advancing the
+      # frame-interval accumulator, so the loop never sleeps and never
+      # draws - except once per emulated second, so the window does not
+      # look frozen. Same shape here, time-boxed per pass so the event
+      # pump above still gets to run.
+      let batchEnd = getTicks() + FullSpeedBatchMs
+      while getTicks() < batchEnd:
+        discard bx1RunFrame(h)
+        inc skipFrames
+        inc runFrameSafetyCounter
+        if runFrameSafetyCounter > 2000:
+          break
+      if skipFrames > 62: # ~FRAMES_PER_SEC of emulated time
+        skipFrames = 0
+        drawFrame()
+        nextDrawTicks = getTicks().float + FrameIntervalMs
     else:
-      nextDrawTicks += FrameIntervalMs
-      if nextDrawTicks < frameTicks.float:
-        # Fell far enough behind (a stall, or the window was occluded) that
-        # catching up would mean a burst of back-to-back presents. Resync
-        # to now instead.
-        nextDrawTicks = frameTicks.float + FrameIntervalMs
-      bx1DrawScreen(h)
-      var pixels: pointer
-      var pitch: cint
-      if texture.lockTexture(nil, addr pixels, addr pitch):
-        let fb = bx1GetFramebuffer(h)
-        let srcStride = ScreenWidth * 4
-        if pitch.int == srcStride:
-          copyMem(pixels, fb, ScreenHeight * srcStride)
-        else:
-          for y in 0 ..< ScreenHeight:
-            copyMem(cast[pointer](cast[uint](pixels) + uint(y * pitch.int)),
-                    cast[pointer](cast[uint](fb) + uint(y * srcStride)), srcStride)
-        texture.unlockTexture()
-      renderer.clear()
-      var screenDst = rect(0.cint, 0.cint, ScreenWidth.cint, ScreenHeight.cint)
-      renderer.copy(texture, nil, addr screenDst)
+      while bx1GetBufferedAudioFrames(h) < targetBufferedFrames:
+        discard bx1RunFrame(h)
+        inc runFrameSafetyCounter
+        if runFrameSafetyCounter > 1000:
+          # Should be unreachable in normal operation; bail out rather than
+          # freeze the UI if the VM ever stops producing audio progress.
+          break
 
-      # Status bar: drawn directly into the emulator's own window, not as a
-      # separate GUI window - a second floating window is easy to lose
-      # behind the main one (confirmed: an earlier attempt placed it
-      # off-screen and nobody noticed). Layout and wording mirror the
-      # original Windows app's own status bar (winmain.cpp's
-      # update_status_bar): "FD:" followed by one lamp per drive, a gap,
-      # then "CMT:" and the deck's own message string. All of it comes
-      # from the vendored core unmodified. No HDD section: this app has no
-      # UI path to mount a hard disk (BluePrint/CLAUDE.md - commercial X1
-      # games did not use one), so it would only ever read as idle.
-      #
-      # The one deliberate departure from the original: the frame rate.
-      # The original puts it in the window title ("%s - %d fps (%d %%)");
-      # here it sits at the right end of the bar instead, where a title
-      # bar the user may not be looking at cannot hide it.
-      if showStatusBar:
-        renderer.setDrawColor(20, 20, 20, 255)
-        var barRect = rect(0.cint, ScreenHeight.cint, ScreenWidth.cint, StatusBarHeight.cint)
-        discard renderer.fillRect(addr barRect)
-
-        const
-          lampW = 14.cint # the original's indicator bitmaps are 14x12
-          lampH = 12.cint
-          lampY = (ScreenHeight + (StatusBarHeight - lampH.int) div 2).cint
-          textY = (ScreenHeight + (StatusBarHeight - ankfont.GlyphHeight) div 2).cint
-          labelColor = (200'u8, 200'u8, 200'u8)
-          # Three lamp states, matching the original's access_off /
-          # access_on / access_green bitmaps. The third is selected by
-          # floppy_disk_indicator_color(), which the core raises only for a
-          # drive currently configured as 2HD - so a 2D game legitimately
-          # never shows it.
-          lampOff = (60'u8, 60'u8, 60'u8)
-          lampOn = (230'u8, 60'u8, 50'u8)
-          lampOn2 = (60'u8, 220'u8, 70'u8)
-          tapeOn = (230'u8, 160'u8, 30'u8)
-
-        var x = 6.cint
-        x = font.draw(renderer, x, textY, "FD:", labelColor[0], labelColor[1], labelColor[2])
-        x += 4
-        for drv in 0 ..< FloppyDrives:
-          let (r, g, b) =
-            if bx1IsFloppyDiskAccessed(h, drv.cint) == 0: lampOff
-            elif bx1FloppyDiskIndicatorColor(h, drv.cint) != 0: lampOn2
-            else: lampOn
-          renderer.setDrawColor(r, g, b, 255)
-          var lampRect = rect(x, lampY, lampW, lampH)
-          discard renderer.fillRect(addr lampRect)
-          x += lampW + 2
-        x += 8
-
-        x = font.draw(renderer, x, textY, "CMT:", labelColor[0], labelColor[1], labelColor[2])
-        x += 4
-        let (tr, tg, tb) = if bx1IsTapeActive(h) != 0: tapeOn else: labelColor
-        font.draw(renderer, x, textY, tapeStatus, tr, tg, tb)
-
-        let fpsText = $fpsDisplay & " fps"
-        font.draw(renderer, ScreenWidth.cint - font.width(fpsText) - 6, textY, fpsText,
-          labelColor[0], labelColor[1], labelColor[2])
-
-      renderer.present()
-      inc drawnFrames
+      # Drawing runs on its own clock rather than "once per pass through
+      # this loop". Neither of the obvious alternatives works: presenting
+      # every pass spins as fast as the GPU accepts frames (measured
+      # ~170/sec on a 61.94Hz machine, burning a core to show nothing new),
+      # and presenting only when the VM advanced gives ~10/sec, because the
+      # pacing loop above advances the VM in bursts - the core synthesizes
+      # a whole sound_latency window (100ms, ~6 frames) per create_sound
+      # call, then nothing until the ring buffer drains. Pacing here on
+      # wall time decouples the two, which is also how the original app
+      # works (its VM is paced by the DirectSound cursor while WM_PAINT
+      # redraws on its own timer).
+      let frameTicks = getTicks()
+      if frameTicks.float < nextDrawTicks:
+        delay(1)
+      else:
+        nextDrawTicks += FrameIntervalMs
+        if nextDrawTicks < frameTicks.float:
+          # Fell far enough behind (a stall, or the window was occluded)
+          # that catching up would mean a burst of back-to-back presents.
+          # Resync to now instead.
+          nextDrawTicks = frameTicks.float + FrameIntervalMs
+        drawFrame()
 
     # Frame rate and tape message are both sampled on a timer rather than
     # every frame: the rate needs a window to average over, and the tape
@@ -894,6 +937,12 @@ proc main() =
       # later, so anything derived from "is a disk inserted" (the Write
       # Protected item) would otherwise stay stale until the next click.
       refreshFloppyMenus()
+      # EMU::reset() and EMU::special_reset() both clear config.romaji_to_kana
+      # themselves, so Reset or NMI silently turns this off underneath the
+      # menu. The original re-derives its checkmarks every time a menu is
+      # opened; this timer serves the same purpose.
+      if romajiItemRef.tag != 0:
+        romajiItemRef.checked = bx1GetRomajiToKana(h) != 0
       lastStatusTicks = nowTicks
     if nowTicks - lastFpsTicks >= 1000:
       # Drawn frames per second, which is what the original's counter
