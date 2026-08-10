@@ -38,6 +38,7 @@ proc bx1MuteSound*(h: Bx1Handle) {.importc: "bx1_mute_sound", bx1.}
 proc bx1KeyDown*(h: Bx1Handle, vkCode: cint, repeat: cint)
   {.importc: "bx1_key_down", bx1.}
 proc bx1KeyUp*(h: Bx1Handle, vkCode: cint) {.importc: "bx1_key_up", bx1.}
+proc bx1KeyChar*(h: Bx1Handle, code: cint) {.importc: "bx1_key_char", bx1.}
 proc bx1SetJoy*(h: Bx1Handle, index: cint, status: uint32)
   {.importc: "bx1_set_joy", bx1.}
 proc bx1SetMouse*(h: Bx1Handle, dx, dy, buttons: cint)

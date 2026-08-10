@@ -101,6 +101,13 @@ void bx1_mute_sound(bx1_handle h);
 /// VK_SHIFT event the VM expects.
 void bx1_key_down(bx1_handle h, int vk_code, int repeat);
 void bx1_key_up(bx1_handle h, int vk_code);
+/// The *character* a keystroke produced, as opposed to the physical key
+/// bx1_key_down reports - the equivalent of Win32's WM_CHAR, which the
+/// original app forwards alongside WM_KEYDOWN. Send it for every typed
+/// character; the core ignores it unless Romaji to Kana is on, and when
+/// that is on it is the ONLY path by which ordinary keys reach the guest
+/// (EMU::key_down stops forwarding them and feeds the auto key instead).
+void bx1_key_char(bx1_handle h, int code);
 /// index: 0-3. status: bit N set means button N held (raw physical state;
 /// the core remaps this through config.joy_buttons before the VM sees it).
 void bx1_set_joy(bx1_handle h, int index, uint32_t status);

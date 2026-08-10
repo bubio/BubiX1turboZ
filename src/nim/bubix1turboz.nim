@@ -686,6 +686,10 @@ proc main() =
   # Alpha comes back as 0 from the core (see docs/dev/DevelopmentPlan.md
   # 1.4); blending it would make the whole picture transparent.
   discard texture.setTextureBlendMode(BlendMode_None)
+  # SDL2 starts with text input enabled on most platforms, but say so
+  # explicitly: without TextInput events the Romaji to Kana option would
+  # leave the guest with no keyboard at all (see the TextInput handler).
+  startTextInput()
   # Everything is drawn in 640x(400[+24]) coordinates and SDL scales that
   # to whatever the window actually is, so fullscreen fills the display
   # instead of leaving the picture in a corner.
@@ -843,6 +847,22 @@ proc main() =
         let vk = keymap.toVk(ev.key.keysym.scancode)
         if vk != 0:
           bx1KeyUp(h, vk)
+      of TextInput:
+        # The character a keystroke produced, forwarded alongside the
+        # physical key above - the same pairing Win32 does with WM_KEYDOWN
+        # and WM_CHAR. The core ignores this unless Romaji to Kana is on,
+        # and when it is on this is the only way ordinary keys reach the
+        # guest at all: EMU::key_down stops forwarding them and expects
+        # key_char to feed the auto key instead. Without it, switching that
+        # option on makes the keyboard go completely dead.
+        for i in 0 ..< ev.text.text.len:
+          let ch = ev.text.text[i].int
+          if ch == 0:
+            break
+          # SDL delivers UTF-8; the core's auto key table is ASCII/JIS X
+          # 0201, so anything multi-byte has no key to map to anyway.
+          if ch < 0x80:
+            bx1KeyChar(h, ch.cint)
       of WindowEvent:
         case ev.window.event
         of WindowEvent_Close:

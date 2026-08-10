@@ -155,6 +155,11 @@ void bx1_key_up(bx1_handle h, int vk_code)
 	emu_of(h)->key_up(vk_code, false);
 }
 
+void bx1_key_char(bx1_handle h, int code)
+{
+	emu_of(h)->key_char((char)code);
+}
+
 void bx1_set_joy(bx1_handle h, int index, uint32_t status)
 {
 	if(index < 0 || index >= 4) {
