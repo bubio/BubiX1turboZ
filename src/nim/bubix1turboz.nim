@@ -181,17 +181,27 @@ proc main() =
     driveBank[drv] = -1
     refreshFloppyMenu(drv)
 
-  proc loadMedia(path: string, startDrive = 0) =
-    ## Single entry point for anything that can end up mounted: a bare
-    ## image, a 7z/zip archive, or an m3u/m3u8 playlist. Used by drag &
-    ## drop, Recent Files, and the "Open Disk or Archive..." menu item, so
-    ## extension handling lives in exactly one place (archive.classify)
-    ## instead of being re-decided at each call site.
-    var resolved: seq[string]
+  proc resolveOrWarn(path: string): seq[string] =
     try:
-      resolved = archive.resolveMedia(path)
+      result = archive.resolveMedia(path)
     except IOError as e:
       stderr.writeLine "bubix1turboz: " & e.msg
+      result = @[]
+
+  proc loadMedia(path: string, startDrive = 0, reset = false) =
+    ## Single entry point for anything that can end up in a drive: a bare
+    ## disk image, a 7z/zip archive, or an m3u/m3u8 playlist. Every way of
+    ## inserting a disk goes through here - FD0/FD1's Insert, their Recent
+    ## entries, and drag & drop - so a game in an archive is opened exactly
+    ## like a bare .d88, with no separate "open archive" action to pick
+    ## between (the same single-action model Bubilator88 uses).
+    ##
+    ## `reset` is what still distinguishes those callers: dropping a file
+    ## on the window boots it (BluePrint line 32), while inserting one from
+    ## the menu leaves the running machine alone, so swapping disks
+    ## mid-game does not throw the session away.
+    let resolved = resolveOrWarn(path)
+    if resolved.len == 0:
       return
     # A multi-disk set fills consecutive drives starting from the one the
     # user asked for, so picking a playlist from FD1's menu loads disk 1
@@ -214,7 +224,19 @@ proc main() =
       # game" and what they will look for again in Recent Files - not
       # the extracted cache path or an individual disk inside it.
       rememberRecent(path)
-      bx1Reset(h)
+      if reset:
+        bx1Reset(h)
+
+  proc loadTape(path: string) =
+    ## The CMT deck's equivalent of loadMedia: takes an archive, a playlist
+    ## or a bare tape image and plays the first tape it finds. Deliberately
+    ## ignores any disk images in the same archive rather than reusing
+    ## loadMedia, so opening a tape can never swap a disk out from under a
+    ## running game.
+    for p in resolveOrWarn(path):
+      if archive.classify(p) == archive.mkTape and bx1OpenTape(h, p.cstring, 1) != 0:
+        rememberRecent(path)
+        return
 
   var win: Window
 
@@ -366,11 +388,10 @@ proc main() =
   # recent files. Only two drives, per BluePrint; the original's FD2/FD3
   # and all four HD menus are not built.
   proc makeInsertAction(drv: int): MenuAction =
-    result = proc () =
-      let path = uing.openFile(win)
-      if path.len > 0 and mountFloppy(drv, path, 0):
-        rememberRecent(path)
-  proc makeMediaAction(drv: int): MenuAction =
+    # One Insert for every supported format. A 7z/zip archive or an
+    # m3u/m3u8 playlist is opened with exactly the same action as a bare
+    # .d88 - loadMedia works out which it is - rather than through a
+    # separate "open archive" item the user would have to choose between.
     result = proc () =
       let path = uing.openFile(win)
       if path.len > 0:
@@ -401,10 +422,6 @@ proc main() =
   for drv in 0 ..< FloppyDrives:
     let fd = nativemenu.addMenu("FD" & $drv)
     fd.addItem("Insert", makeInsertAction(drv))
-    # Not in the original: this port also accepts 7z/zip archives and
-    # m3u/m3u8 playlists (BluePrint), which need their own entry point
-    # since the plain Insert above mounts a single image as-is.
-    fd.addItem("Insert Archive or Playlist", makeMediaAction(drv))
     fd.addItem("Eject", makeEjectAction(drv))
     fd.addItem("Insert Blank 2D Disk", makeBlankAction(drv, 0))
     fd.addItem("Insert Blank 2DD Disk", makeBlankAction(drv, 1))
@@ -448,9 +465,11 @@ proc main() =
   # --- CMT menu ---
   let cmtMenu = nativemenu.addMenu("CMT")
   cmtMenu.addItem("Play", proc () =
+    # Same single-action rule as FD0/FD1's Insert: a tape inside an archive
+    # opens through the ordinary Play, not a separate item.
     let path = uing.openFile(win)
-    if path.len > 0 and bx1OpenTape(h, path.cstring, 1) != 0:
-      rememberRecent(path))
+    if path.len > 0:
+      loadTape(path))
   cmtMenu.addItem("Rec", proc () =
     let path = uing.saveFile(win)
     if path.len > 0:
@@ -744,7 +763,7 @@ proc main() =
         # alone in case the user is hot-swapping a disk mid-session).
         let raw = ev.drop.file
         if raw != nil:
-          loadMedia($raw)
+          loadMedia($raw, 0, reset = true)
           sdlFreeStr(raw)
       else:
         discard
