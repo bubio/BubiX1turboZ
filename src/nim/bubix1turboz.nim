@@ -53,7 +53,10 @@ const
   StatusBarHeight = 24
   WindowHeight = ScreenHeight + StatusBarHeight
   RecentSlots = 8 # matches MAX_HISTORY in src/core/config.h
-  DiskSlots = 16 # fixed slots for the D88 multi-bank picker (phase 7)
+  # Fixed slots for the D88 multi-bank picker. Matches the core's own
+  # MAX_D88_BANKS (src/core/emu.h) so a large compilation image cannot have
+  # disks the UI silently cannot reach; unused slots are hidden, not shown.
+  DiskSlots = 64
   # The core is built with USE_FLOPPY_DISK=4, but BluePrint calls for two
   # drives in the UI (commercial X1 titles never needed more). Reducing the
   # feature here rather than in the core is the standing policy - see
@@ -191,9 +194,14 @@ proc main() =
     refreshFloppyMenu(drv)
 
   proc resolveOrWarn(path: string): seq[string] =
+    # Catches OSError as well as IOError: archive.nim reaches the filesystem
+    # through getFileInfo/createDir/removeDir/moveDir, all of which raise
+    # OSError, and OSError is not an IOError - so an unreadable or
+    # just-deleted archive would escape an IOError-only handler and take the
+    # app down instead of printing the warning this proc exists for.
     try:
       result = archive.resolveMedia(path)
-    except IOError as e:
+    except CatchableError as e:
       stderr.writeLine "bubix1turboz: " & e.msg
       result = @[]
 
@@ -228,6 +236,10 @@ proc main() =
           inc drv
       of archive.mkArchive, archive.mkPlaylist, archive.mkUnknown:
         discard
+    # `mounted` means "the core accepted at least one image", not "the image
+    # was valid" - bx1_open_floppy cannot tell us the latter (see its
+    # comment), so a corrupt file still lands in Recent. The original
+    # records history on open the same way, without validating first.
     if mounted:
       # The archive/playlist itself is what the user thinks of as "the
       # game" and what they will look for again in Recent Files - not

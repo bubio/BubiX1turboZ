@@ -233,6 +233,9 @@ void bx1_close_tape(bx1_handle h)
 
 int bx1_is_floppy_disk_accessed(bx1_handle h, int drv)
 {
+	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
+		return 0;
+	}
 	// is_floppy_disk_accessed() returns a bitmask (bit N = drive N); this
 	// reflects the disk controller's live motor/head state, not merely
 	// "is a disk inserted", so it is the correct signal for an activity
@@ -248,6 +251,9 @@ int bx1_is_tape_active(bx1_handle h)
 
 int bx1_floppy_disk_indicator_color(bx1_handle h, int drv)
 {
+	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
+		return 0;
+	}
 	return (emu_of(h)->floppy_disk_indicator_color() & (1u << drv)) ? 1 : 0;
 }
 
@@ -384,10 +390,14 @@ int bx1_load_state(bx1_handle h, const char* path)
 
 void bx1_set_cpu_power(bx1_handle h, int power)
 {
-	// EMU reads config.cpu_power on every run() to size the emulated frame,
-	// so unlike most config fields this one needs no update_config().
-	(void)h;
 	config.cpu_power = power;
+	// EVENT caches config.cpu_power in its own `power` member: it reads the
+	// config in its constructor and then only re-reads it from
+	// EVENT::update_config(), which nothing but EMU::update_config() calls.
+	// Without this the new multiplier is simply never picked up (the
+	// original does the same thing - winmain.cpp calls update_config() right
+	// after assigning config.cpu_power).
+	emu_of(h)->update_config();
 }
 
 int bx1_get_cpu_power(bx1_handle h)
@@ -429,10 +439,28 @@ void bx1_start_auto_key(bx1_handle h, const char* text)
 	// set_auto_key_list() takes a non-const buffer because it rewrites the
 	// text in place while mapping characters to key codes; hand it a copy
 	// rather than casting away const on the caller's string.
+	//
+	// Only ASCII survives the copy. The core reads the buffer as Shift-JIS,
+	// treating 0x81-0x9f and 0xe0+ as lead bytes it skips two at a time, so
+	// feeding it UTF-8 does not merely drop the non-ASCII characters - it
+	// desynchronizes that scan and eats the first byte of whatever follows.
+	// (Trace U+3042 = E3 81 82: 0xE3 skips 0x81, then 0x82 is itself in the
+	// lead-byte range and skips the *next* character's first byte.) The host
+	// clipboard is UTF-8, so filter here, matching bx1_key_char's caller.
 	int len = (int)strlen(text);
 	char* buf = new char[len + 1];
-	memcpy(buf, text, len + 1);
-	emu->set_auto_key_list(buf, len);
+	int n = 0;
+	for(int i = 0; i < len; i++) {
+		if((unsigned char)text[i] < 0x80) {
+			buf[n++] = text[i];
+		}
+	}
+	buf[n] = '\0';
+	if(n == 0) {
+		delete[] buf;
+		return;
+	}
+	emu->set_auto_key_list(buf, n);
 	delete[] buf;
 	emu->start_auto_key();
 }

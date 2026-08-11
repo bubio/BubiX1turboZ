@@ -59,7 +59,7 @@ proc extractArchive*(path: string): string =
   let tmp = dest & ".tmp-" & $getCurrentProcessId()
   removeDir(tmp)
   createDir(tmp)
-  let (output, code) = execCmdEx("tar -xf " & path.quoteShell() & " -C " & tmp.quoteShell())
+  let (output, code) = execCmdEx("/usr/bin/tar -xf " & path.quoteShell() & " -C " & tmp.quoteShell())
   if code != 0:
     removeDir(tmp)
     raise newException(IOError, "failed to extract " & path & ": " & output)

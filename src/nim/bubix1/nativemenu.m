@@ -52,6 +52,35 @@ static BX1MenuTarget *target = nil;
 // without holding pointers across the FFI boundary.
 static NSMutableDictionary *items_by_tag = nil;
 
+/*
+	Menu titles can carry bytes that are not UTF-8, and +stringWithUTF8String:
+	returns nil for those - which would then reach -setTitle: and raise
+	NSInvalidArgumentException. This is not hypothetical for X1 software: the
+	core stores a D88's 17-byte disk name verbatim on non-Windows builds (its
+	MultiByteToWideChar conversion is inside #ifdef _UNICODE, i.e. Win32
+	only), so a Japanese multi-disk image hands us raw Shift-JIS, as do
+	Shift-JIS filenames coming out of bsdtar. Try UTF-8, then Shift-JIS, and
+	fall back to a lossy read so a title is always produced.
+*/
+static NSString *to_nsstring(const char *bytes)
+{
+	NSString *s;
+
+	if (bytes == NULL) {
+		return @"";
+	}
+	if ((s = [NSString stringWithUTF8String:bytes]) != nil) {
+		return s;
+	}
+	s = [NSString stringWithCString:bytes encoding:NSShiftJISStringEncoding];
+	if (s != nil) {
+		return s;
+	}
+	s = [[[NSString alloc] initWithBytes:bytes length:strlen(bytes)
+		encoding:NSISOLatin1StringEncoding] autorelease];
+	return s != nil ? s : @"";
+}
+
 static void ensure_globals(void)
 {
 	if (target == nil) {
@@ -75,7 +104,7 @@ void bx1_nmenu_set_action(bx1_nmenu_action_fn fn)
 // story. Nothing here wants automatic validation.
 static NSMenu *make_menu(const char *title)
 {
-	NSMenu *menu = [[NSMenu alloc] initWithTitle:[NSString stringWithUTF8String:title]];
+	NSMenu *menu = [[NSMenu alloc] initWithTitle:to_nsstring(title)];
 	[menu setAutoenablesItems:NO];
 	return menu;
 }
@@ -91,7 +120,7 @@ void *bx1_nmenu_add_toplevel(const char *title)
 		return NULL;
 	}
 	menu = make_menu(title);
-	item = [[NSMenuItem alloc] initWithTitle:[NSString stringWithUTF8String:title]
+	item = [[NSMenuItem alloc] initWithTitle:to_nsstring(title)
 		action:NULL keyEquivalent:@""];
 	[item setSubmenu:menu];
 	[bar addItem:item];
@@ -108,7 +137,7 @@ void *bx1_nmenu_add_submenu(void *parent, const char *title)
 		return NULL;
 	}
 	menu = make_menu(title);
-	item = [[NSMenuItem alloc] initWithTitle:[NSString stringWithUTF8String:title]
+	item = [[NSMenuItem alloc] initWithTitle:to_nsstring(title)
 		action:NULL keyEquivalent:@""];
 	[item setSubmenu:menu];
 	[(NSMenu *)parent addItem:item];
@@ -129,7 +158,7 @@ void bx1_nmenu_add_item(void *menu, const char *title, int tag, const char *key,
 	if (menu == NULL) {
 		return;
 	}
-	item = [[NSMenuItem alloc] initWithTitle:[NSString stringWithUTF8String:title]
+	item = [[NSMenuItem alloc] initWithTitle:to_nsstring(title)
 		action:@selector(menuAction:) keyEquivalent:@""];
 	[item setTarget:target];
 	[item setTag:tag];
@@ -200,5 +229,5 @@ void bx1_nmenu_set_hidden(int tag, int hidden)
 
 void bx1_nmenu_set_item_title(int tag, const char *title)
 {
-	[item_for_tag(tag) setTitle:[NSString stringWithUTF8String:title]];
+	[item_for_tag(tag) setTitle:to_nsstring(title)];
 }
