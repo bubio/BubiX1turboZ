@@ -40,6 +40,7 @@ import bubix1/ankfont
 import bubix1/nativemenu
 import bubix1/clipboard
 import bubix1/hostconfig
+import bubix1/filedialog
 
 const
   ScreenWidth = 640
@@ -278,17 +279,23 @@ proc main() =
   # placeholder item but wires no action to it, which Cocoa then reports
   # as permanently disabled (no target-action pair to validate).
   appMenuHost.addAboutItem(proc (sender: MenuItem, w: Window) =
-    uing.msgBox(w, "BubiX1turboZ " & appVersion,
+    filedialog.message("BubiX1turboZ " & appVersion,
       "Multi-platform Sharp X1 turbo Z emulator.\n" &
       "Emulation core: Common Source Code Project's eX1turboZ (GPL-2.0-or-later)."))
 
   # Device and Host menus are built natively after win.show(); see below.
 
+  # A placeholder, not part of the UI. libui-ng will only build a menu bar
+  # for a uiWindow created with hasMenubar, and only exposes About/Quit
+  # through its Menu API, so one uiWindow has to exist - but it has nothing
+  # to show, and libui places it wherever it likes (observed at the very
+  # bottom-left corner of the screen). It is shown once so libui finalizes
+  # the menu bar, then hidden immediately below; the menu bar itself lives
+  # on NSApp, not on this window, so it survives. Nothing is parented to
+  # this window any more either - the file dialogs and the About alert are
+  # native now (filedialog.nim), precisely so they stop appearing as sheets
+  # hanging off this stray window.
   win = newWindow("BubiX1turboZ", 320, 80, true)
-  win.margined = true
-  let box = newVerticalBox(true)
-  box.add newLabel("BubiX1turboZ")
-  win.child = box
   win.onClosing = proc (sender: Window): bool =
     # Returning true here segfaulted in testing: uing's onClosingWrapper
     # (uing.nim) calls `controlDestroy(w.impl)` synchronously whenever
@@ -309,6 +316,7 @@ proc main() =
     running = false
     false
   win.show()
+  win.hide()
 
   # A botched NSApp modal session from *any* Open/Save dialog (uing's
   # openFile/saveFile - reproduced with the stock File > Open Floppy
@@ -418,14 +426,14 @@ proc main() =
     # .d88 - loadMedia works out which it is - rather than through a
     # separate "open archive" item the user would have to choose between.
     result = proc () =
-      let path = uing.openFile(win)
+      let path = filedialog.openFile(filedialog.DiskExtensions)
       if path.len > 0:
         loadMedia(path, drv)
   proc makeEjectAction(drv: int): MenuAction =
     result = proc () = ejectFloppy(drv)
   proc makeBlankAction(drv, mediaType: int): MenuAction =
     result = proc () =
-      let path = uing.saveFile(win)
+      let path = filedialog.saveFile(filedialog.BlankDiskExtensions, "blank.d88")
       if path.len > 0 and bx1CreateBlankFloppyDisk(h, path.cstring, mediaType.cint) != 0:
         discard mountFloppy(drv, path, 0)
   proc makeBankAction(drv, bank: int): MenuAction =
@@ -492,11 +500,11 @@ proc main() =
   cmtMenu.addItem("Play", proc () =
     # Same single-action rule as FD0/FD1's Insert: a tape inside an archive
     # opens through the ordinary Play, not a separate item.
-    let path = uing.openFile(win)
+    let path = filedialog.openFile(filedialog.TapeExtensions)
     if path.len > 0:
       loadTape(path))
   cmtMenu.addItem("Rec", proc () =
-    let path = uing.saveFile(win)
+    let path = filedialog.saveFile("wav", "recording.wav")
     if path.len > 0:
       discard bx1OpenTape(h, path.cstring, 0))
   cmtMenu.addItem("Eject", proc () = bx1CloseTape(h))
