@@ -658,13 +658,25 @@ proc main() =
   let hostMenu = nativemenu.addMenu("Host")
   let screenMenu = hostMenu.addSubmenu("Screen")
   var screenItems: array[2, MenuItemRef]
+  var isFullscreen = false
   proc applyFullscreen(on: bool) =
     if sdlWin != nil:
       discard sdlWin.setFullscreen(if on: SDL_WINDOW_FULLSCREEN_DESKTOP else: 0)
+    isFullscreen = on
     for j in 0 ..< 2:
       screenItems[j].checked = (j == (if on: 1 else: 0))
   screenItems[0] = screenMenu.addItem("Window x1", proc () = applyFullscreen(false))
-  screenItems[1] = screenMenu.addItem("Fullscreen 640x400", proc () = applyFullscreen(true))
+  # Carries the shortcut, and toggles rather than only entering fullscreen,
+  # so there is always a way back out: in fullscreen the menu bar is only
+  # reachable by knowing to push the pointer at the top of the screen, and
+  # a user who does not know that is stuck. Ctrl-Cmd-F is what macOS uses
+  # for Enter/Exit Full Screen everywhere else.
+  #
+  # Not the original's Alt+Enter: on this port Option is the X1's GRAPH key
+  # (keymap.nim), so that combination belongs to the guest.
+  screenItems[1] = screenMenu.addItem("Fullscreen 640x400",
+    proc () = applyFullscreen(not isFullscreen),
+    key = "f", mods = ModCommand or ModControl)
   screenItems[0].checked = true
 
   hostMenu.addItem("Volume", proc () = volumeWin.show())
