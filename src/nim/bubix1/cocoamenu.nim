@@ -17,6 +17,8 @@ proc bx1MenuSetTitleImpl(menuTitle, itemPrefix, newTitle: cstring): cint
 proc bx1MenuSetEnabledImpl(menuTitle, itemPrefix: cstring, enabled: cint): cint
   {.importc: "bx1_menu_set_enabled", cdecl.}
 proc bx1MenuDisableAutoenableAllImpl() {.importc: "bx1_menu_disable_autoenable_all", cdecl.}
+proc bx1MenuSetHiddenImpl(menuTitle, itemPrefix: cstring, hidden: cint): cint
+  {.importc: "bx1_menu_set_hidden", cdecl.}
 proc bx1MenuHideToplevelImpl(menuTitle: cstring): cint
   {.importc: "bx1_menu_hide_toplevel", cdecl.}
 
@@ -39,6 +41,9 @@ proc setMenuShortcut*(menuTitle: string, itemPrefix: string, key: string, withSh
 
 proc setMenuItemTitle*(menuTitle: string, itemPrefix: string, newTitle: string): bool =
   bx1MenuSetTitleImpl(titleArg(menuTitle), itemPrefix.cstring, newTitle.cstring) != 0
+
+proc setMenuItemHidden*(menuTitle: string, itemPrefix: string, hidden: bool): bool {.discardable.} =
+  bx1MenuSetHiddenImpl(titleArg(menuTitle), itemPrefix.cstring, hidden.cint) != 0
 
 proc setMenuItemEnabled*(menuTitle: string, itemPrefix: string, enabled: bool): bool =
   bx1MenuSetEnabledImpl(titleArg(menuTitle), itemPrefix.cstring, enabled.cint) != 0

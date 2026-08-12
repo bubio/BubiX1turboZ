@@ -275,6 +275,15 @@ proc main() =
       win.destroy()
       win = nil
     true)
+  # libui-ng builds a "Preferences..." item into the application menu
+  # unconditionally, as a uiprivMenuItem with no uiMenuItem bound to it -
+  # and its click handler calls uiprivImplBug ("Clicked nonexistent
+  # uiMenuItem which should be impossible"), which aborts the process
+  # (libui/darwin/menu.m:58). So an app that never calls
+  # addPreferencesItem, like this one, ships a menu item that kills it.
+  # Bind it so it cannot abort, then hide it, since there is no
+  # preferences window here for it to open.
+  appMenuHost.addPreferencesItem(proc (sender: MenuItem, w: Window) = discard)
   # Without an explicit addAboutItem call, libui-ng still shows the
   # placeholder item but wires no action to it, which Cocoa then reports
   # as permanently disabled (no target-action pair to validate).
@@ -331,6 +340,9 @@ proc main() =
   # the Menu they were declared on as an empty top-level entry. Hide it -
   # removing it makes libui's own cleanup miss it and abort at exit.
   cocoamenu.hideTopLevelMenu("File")
+  # "" selects the application menu; the title is libui's own ASCII
+  # literal, so matching its prefix is stable.
+  cocoamenu.setMenuItemHidden("", "Preferences", true)
 
   # --- Control menu (built natively; see nativemenu.nim) ---
   # Item order, wording and grouping follow the original eX1turboZ's own
@@ -704,13 +716,36 @@ proc main() =
   # feedback the stretched look reads as distorted on a modern display;
   # this project prioritizes a clean, square-pixel picture over
   # replicating that CRT-accurate aspect ratio.
+  # Prefer Metal explicitly rather than taking whatever SDL ranks first.
+  # Crash reports from this app show SIGBUS inside SDL's Cocoa OpenGL path
+  # (-[SDL3View updateLayer] -> ScheduleContextUpdates ->
+  # +[NSOpenGLContext currentContext], jumping to a poisoned pointer)
+  # within a third of a second of launch. Nothing here wants OpenGL - the
+  # renderer only blits one streaming texture - and Metal is present on
+  # every Mac this project targets (macOS 13.5+), so the simplest fix is
+  # to not have that code path available to be taken. SDL falls back on
+  # its own if the hint names a driver it cannot provide.
+  discard setHint("SDL_RENDER_DRIVER", "metal")
+
+  # Created hidden and shown only once the renderer exists. AppKit can
+  # otherwise display the window's backing layer in the window between
+  # SDL_CreateWindow and SDL_CreateRenderer, i.e. while the view has no
+  # renderer backing it yet - which is exactly the state the crash above
+  # happens in.
   sdlWin = createWindow("BubiX1turboZ - Screen", SDL_WINDOWPOS_UNDEFINED,
-    SDL_WINDOWPOS_UNDEFINED, ScreenWidth.cint, windowHeight(), SDL_WINDOW_SHOWN)
+    SDL_WINDOWPOS_UNDEFINED, ScreenWidth.cint, windowHeight(), SDL_WINDOW_HIDDEN)
   if sdlWin == nil:
     fail "SDL_CreateWindow failed: " & $getError()
   renderer = createRenderer(sdlWin, -1, Renderer_Accelerated)
   if renderer == nil:
     fail "SDL_CreateRenderer failed: " & $getError()
+  sdlWin.showWindow()
+
+  # Logged because the crash above is specific to one backend: if it ever
+  # comes back, the first question is which renderer was in use.
+  var rendererInfo: RendererInfo
+  if renderer.getRendererInfo(addr rendererInfo) == 0:
+    echo "renderer: ", $rendererInfo.name
   let texture = renderer.createTexture(SDL_PIXELFORMAT_ARGB8888,
     SDL_TEXTUREACCESS_STREAMING, ScreenWidth, ScreenHeight)
   if texture == nil:

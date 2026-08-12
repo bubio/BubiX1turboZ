@@ -95,6 +95,16 @@ int bx1_menu_set_enabled(const char *menu_title, const char *item_prefix, int en
 	return 1;
 }
 
+int bx1_menu_set_hidden(const char *menu_title, const char *item_prefix, int hidden)
+{
+	NSMenuItem *item = find_item(menu_title, item_prefix);
+	if (item == nil) {
+		return 0;
+	}
+	[item setHidden:(hidden != 0)];
+	return 1;
+}
+
 /*
 	Hides a whole top-level menu. Deliberately hides rather than removes:
 	libui-ng's uiprivUninitMenus frees its uiMenu objects by walking
