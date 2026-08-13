@@ -13,18 +13,27 @@
 nim = "2.2.10"
 
 [env]
-# Neutralised deliberately. The asdf-nim plugin's exec-env exports
-# DYLD_LIBRARY_PATH=/opt/homebrew/lib on Apple Silicon so the Nim compiler
-# can find Homebrew libraries (see its bin/exec-env). That variable applies
-# to *every* process started from a shell with this project active,
-# including the emulator itself - and /opt/homebrew/lib contains Mesa's
-# libGL.1.dylib, which then shadows the libGL that Apple's
-# OpenGL.framework expects. SDL's Cocoa backend touches
+# The asdf-nim plugin exports DYLD_LIBRARY_PATH=/opt/homebrew/lib from its
+# bin/exec-env on Apple Silicon, so the Nim compiler can find Homebrew's
+# dynamic libraries. That variable then applies to *every* process started
+# from a shell with this project active - including the emulator itself -
+# and /opt/homebrew/lib contains Mesa's libGL.1.dylib, which shadows the
+# libGL that Apple's OpenGL.framework expects. SDL's Cocoa backend calls
 # +[NSOpenGLContext currentContext] while creating its window, that call
-# lands in the wrong library, and the app dies with SIGBUS before it can
-# draw anything. `open build/BubiX1turboZ` was unaffected only because
-# LaunchServices does not pass the shell's environment on.
+# lands in the wrong library, and the app dies with SIGBUS before drawing
+# anything. (`open build/BubiX1turboZ` was unaffected only because
+# LaunchServices does not pass the shell environment on.)
 #
-# The build does not need it: scripts/build_app_macos_dev.sh passes
-# -L/opt/homebrew/lib explicitly.
+# This is the plugin's own documented opt-out, not a workaround on top of
+# a workaround. Nothing here needs it: scripts/build_app_macos_dev.sh
+# passes -L/opt/homebrew/lib explicitly, and nim/nimble were verified to
+# work without it. CI reads this same file, so it is covered there too.
+# The plugin's own documented opt-out. It is not sufficient on its own -
+# mise runs the plugin's exec-env without this in scope, so the variable
+# still gets exported (verified) - but it states the intent and would take
+# effect if that ordering ever changes.
+ASDF_NIM_MACOS_M1_HOMEBREW_WORKAROUND = "no"
+# This is the part that actually wins: mise applies config env after the
+# plugin, so the search path ends up empty and dyld resolves libGL from
+# the system as usual.
 DYLD_LIBRARY_PATH = ""
