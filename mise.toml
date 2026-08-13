@@ -24,11 +24,11 @@ nim = "2.2.10"
 # anything. (`open build/BubiX1turboZ` was unaffected only because
 # LaunchServices does not pass the shell environment on.)
 #
-# This is the plugin's own documented opt-out, not a workaround on top of
-# a workaround. Nothing here needs it: scripts/build_app_macos_dev.sh
-# passes -L/opt/homebrew/lib explicitly, and nim/nimble were verified to
-# work without it. CI reads this same file, so it is covered there too.
-# The plugin's own documented opt-out. It is not sufficient on its own -
+# Nothing here needs the variable: scripts/build_app_macos_dev.sh passes
+# -L/opt/homebrew/lib explicitly, and nim/nimble were both verified to work
+# without it. CI reads this same file, so it is covered there too.
+
+# The plugin's own documented opt-out. Not sufficient on its own -
 # mise runs the plugin's exec-env without this in scope, so the variable
 # still gets exported (verified) - but it states the intent and would take
 # effect if that ordering ever changes.
