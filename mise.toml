@@ -11,3 +11,20 @@
 
 [tools]
 nim = "2.2.10"
+
+[env]
+# Neutralised deliberately. The asdf-nim plugin's exec-env exports
+# DYLD_LIBRARY_PATH=/opt/homebrew/lib on Apple Silicon so the Nim compiler
+# can find Homebrew libraries (see its bin/exec-env). That variable applies
+# to *every* process started from a shell with this project active,
+# including the emulator itself - and /opt/homebrew/lib contains Mesa's
+# libGL.1.dylib, which then shadows the libGL that Apple's
+# OpenGL.framework expects. SDL's Cocoa backend touches
+# +[NSOpenGLContext currentContext] while creating its window, that call
+# lands in the wrong library, and the app dies with SIGBUS before it can
+# draw anything. `open build/BubiX1turboZ` was unaffected only because
+# LaunchServices does not pass the shell's environment on.
+#
+# The build does not need it: scripts/build_app_macos_dev.sh passes
+# -L/opt/homebrew/lib explicitly.
+DYLD_LIBRARY_PATH = ""
