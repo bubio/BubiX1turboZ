@@ -20,6 +20,9 @@ const
     ## playlists together, so one action covers them all (the model
     ## Bubilator88 uses - see its diskFileTypes).
   TapeExtensions* = "tap,cmt,t88,wav,zip,7z,m3u,m3u8"
+    ## Currently unreferenced: no UI opens a tape (see bubix1turboz.nim,
+    ## where the CMT menu would be built). Kept for when the deck is
+    ## exposed again.
   BlankDiskExtensions* = "d88"
 
 proc takeString(raw: cstring): string =

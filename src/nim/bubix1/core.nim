@@ -105,8 +105,16 @@ proc bx1TapePushApssRewind*(h: Bx1Handle) {.importc: "bx1_tape_push_apss_rewind"
 proc bx1SetWaveShaper*(h: Bx1Handle, enabled: cint) {.importc: "bx1_set_wave_shaper", bx1.}
 proc bx1GetWaveShaper*(h: Bx1Handle): cint {.importc: "bx1_get_wave_shaper", bx1.}
 
-proc bx1SaveState*(h: Bx1Handle, path: cstring): cint {.importc: "bx1_save_state", bx1.}
-proc bx1LoadState*(h: Bx1Handle, path: cstring): cint {.importc: "bx1_load_state", bx1.}
+proc bx1VmStateSave*(h: Bx1Handle, path: cstring): cint
+  {.importc: "bx1_vm_state_save", bx1.}
+proc bx1VmStateLoad*(h: Bx1Handle, path, rollbackPath: cstring): cint
+  {.importc: "bx1_vm_state_load", bx1.}
+proc bx1CoreStateId*(): uint32 {.importc: "bx1_core_state_id", bx1.}
+proc bx1GetPrinterType*(h: Bx1Handle): cint {.importc: "bx1_get_printer_type", bx1.}
+proc bx1GetSerialType*(h: Bx1Handle): cint {.importc: "bx1_get_serial_type", bx1.}
+proc bx1GetSoundFrequency*(h: Bx1Handle): cint
+  {.importc: "bx1_get_sound_frequency", bx1.}
+proc bx1GetSoundLatency*(h: Bx1Handle): cint {.importc: "bx1_get_sound_latency", bx1.}
 
 proc bx1SetCpuPower*(h: Bx1Handle, power: cint) {.importc: "bx1_set_cpu_power", bx1.}
 proc bx1GetCpuPower*(h: Bx1Handle): cint {.importc: "bx1_get_cpu_power", bx1.}

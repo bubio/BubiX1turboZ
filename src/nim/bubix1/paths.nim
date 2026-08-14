@@ -45,8 +45,21 @@ proc extractedDir*(): string =
   ## Destination for expanded 7z/zip archives (phase 7).
   appSupportDir() / "extracted"
 
+proc scratchDir*(): string =
+  ## Working files that are recreated on demand and never worth keeping:
+  ## the raw VM blob on its way in or out of a save state, and the
+  ## rollback dump `bx1_vm_state_load` needs. Deliberately not under
+  ## Application Support - none of it is user data, and the core would
+  ## otherwise put such files next to the ROMs (create_local_path).
+  getTempDir() / appName
+
+proc stateSlotPath*(slot: int): string =
+  ## Slots 0-9; slot -1 is the quick save ⌘S/⌘L writes.
+  statesDir() / (if slot < 0: "quick.bx1s" else: "slot" & $slot & ".bx1s")
+
 proc ensureDirsExist*() =
   ## Call once at startup, before bx1_create / load_config.
   createDir(romsDir())
   createDir(statesDir())
   createDir(extractedDir())
+  createDir(scratchDir())

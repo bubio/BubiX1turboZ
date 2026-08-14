@@ -26,7 +26,7 @@
 ## HDD are exposed here - feature reduction happens at this layer, not in
 ## the core.
 
-import std/[os, strformat]
+import std/[os, strformat, strutils, times]
 import uing
 import sdl2
 import sdl2/audio
@@ -42,6 +42,8 @@ import bubix1/nativemenu
 import bubix1/clipboard
 import bubix1/hostconfig
 import bubix1/filedialog
+import bubix1/deflate
+import bubix1/savestate
 
 const
   ScreenWidth = 640
@@ -65,6 +67,13 @@ const
   # feature here rather than in the core is the standing policy - see
   # docs/dev/DevelopmentPlan.md 0.5.
   FloppyDrives = 2
+  # Save state slots, plus the quick save ⌘S/⌘L uses. Same count as the
+  # original's Save/Load State submenus.
+  StateSlots = 10
+  QuickSlot = -1
+  # CONFIG_NAME in vm/x1/x1.h. Recorded in a save state so one taken on
+  # another machine of this family cannot be loaded here by accident.
+  Machine = "x1turboz"
   # .nimble is the single source of truth for the app version; the build
   # script reads it and passes it in via -d so it isn't hardcoded twice.
   # The fallback only matters for ad-hoc `nim c` runs outside the script.
@@ -230,29 +239,11 @@ proc main() =
     driveSource[drv] = ""
     refreshFloppyMenu(drv)
 
-  proc syncDrivesFromCore() =
-    ## Re-reads what the core has in each drive. A save state carries the
-    ## core's own record of that (EMU::d88_file, saved and restored with the
-    ## rest of the machine), so after a load the UI could otherwise be
-    ## listing the disks of a title that is no longer mounted.
-    ##
-    ## The core remembers one file per drive, not the archive or playlist it
-    ## came from, so a restored set covers that file alone; the other files
-    ## of a multi-file title become reachable again by reopening it. The
-    ## core also records no path at all for a solid (non-D88) image, which
-    ## has nothing to switch between anyway.
-    for drv in 0 ..< FloppyDrives:
-      let path = $bx1GetFloppyPath(h, drv.cint)
-      let bank = bx1GetFloppyBank(h, drv.cint).int
-      if path.len == 0 or bank < 0:
-        driveSet[drv] = DiskSet()
-        driveIndex[drv] = -1
-        driveSource[drv] = ""
-      else:
-        driveSet[drv] = diskset.build([path])
-        driveSource[drv] = path
-        driveIndex[drv] = bank
-      refreshFloppyMenu(drv)
+  # There used to be a syncDrivesFromCore() here, re-reading EMU::d88_file
+  # after a state load because the core's own .sta restored its record of
+  # what was mounted. This app's states do not: the drives are restored
+  # from the state's own metadata by restoreDrives() below, which knows the
+  # archive a disk came from - something the core never records.
 
   proc pickerRows(s: DiskSet): seq[string] =
     ## One line per disk for the Insert chooser, carrying what Bubilator88's
@@ -281,6 +272,17 @@ proc main() =
       stderr.writeLine "bubix1turboz: " & e.msg
       result = @[]
 
+  proc floppyImagesOf(path: string): seq[string] =
+    ## The disk images one mount request resolves to, in order.
+    ##
+    ## Tapes are dropped rather than mounted: nothing in this app opens the
+    ## CMT deck (see where the menus are built), so a dropped .tap/.cmt -
+    ## or a .wav that merely happens to sit next to the disks inside an
+    ## archive - must not reach it either.
+    for p in resolveOrWarn(path):
+      if archive.classify(p) == archive.mkFloppy:
+        result.add p
+
   proc loadMedia(path: string, startDrive = 0, bothDrives = false, reset = false) =
     ## Single entry point for anything that can end up in a drive: a bare
     ## disk image, a 7z/zip archive, or an m3u/m3u8 playlist. Every way of
@@ -302,22 +304,8 @@ proc main() =
     ## window boots it (BluePrint line 32), while inserting one from the
     ## menu leaves the running machine alone, so swapping disks mid-game
     ## does not throw the session away.
-    let resolved = resolveOrWarn(path)
-    if resolved.len == 0:
-      return
-    var images: seq[string]
     var mounted = false
-    for p in resolved:
-      case archive.classify(p)
-      of archive.mkTape:
-        if bx1OpenTape(h, p.cstring, 1) != 0:
-          mounted = true
-      of archive.mkFloppy:
-        images.add p
-      of archive.mkArchive, archive.mkPlaylist, archive.mkUnknown:
-        discard
-
-    let disks = diskset.build(images)
+    let disks = diskset.build(floppyImagesOf(path))
     if disks.entries.len > 0:
       if bothDrives:
         for drv in 0 ..< FloppyDrives:
@@ -353,12 +341,16 @@ proc main() =
       if reset:
         bx1Reset(h)
 
-  proc loadTape(path: string) =
+  proc loadTape(path: string) {.used.} =
     ## The CMT deck's equivalent of loadMedia: takes an archive, a playlist
     ## or a bare tape image and plays the first tape it finds. Deliberately
     ## ignores any disk images in the same archive rather than reusing
     ## loadMedia, so opening a tape can never swap a disk out from under a
     ## running game.
+    ##
+    ## Currently unreferenced: the CMT menu that called it was removed
+    ## (see the note where the menus are built). Kept, and marked `used`,
+    ## so the deck can be re-exposed without rewriting this.
     for p in resolveOrWarn(path):
       if archive.classify(p) == archive.mkTape and bx1OpenTape(h, p.cstring, 1) != 0:
         rememberRecent(path)
@@ -491,25 +483,322 @@ proc main() =
   romajiItemRef = romajiItem
   controlMenu.addSeparator()
 
-  # Numbered state slots, exactly like the original's two submenus - no
-  # file dialog, just ten fixed files. The core's own state_file_path()
-  # would put them next to the ROMs (its single base_dir); BluePrint calls
-  # for platform-conventional locations instead, so the slot path is built
-  # here against paths.statesDir() while keeping the original's file naming.
+  # Numbered state slots, like the original's two submenus - no file
+  # dialog, just ten fixed files plus the quick save. The format is this
+  # app's own (.bx1s, see docs/dev/SaveState.md and savestate.nim), not the
+  # core's .sta: that one embeds _MAX_PATH-sized buffers, carries no
+  # metadata, and refers to a multi-disk image's banks by bare index.
+  # Nothing migrates - any leftover x1turboz.sta* is simply ignored.
+  var saveStateItems: array[StateSlots, MenuItemRef]
+  var loadStateItems: array[StateSlots, MenuItemRef]
+  var quickLoadItem: MenuItemRef
+
+  proc scratch(name: string): string =
+    paths.scratchDir() / name
+
+  proc iplFingerprint(): uint32 =
+    ## CRC32 of the IPL ROM the core loaded. A save state contains no ROM
+    ## data at all (MEMORY::process_state saves ram/extram only), so this
+    ## is the only way to notice one being restored against another BIOS.
+    ## Reads the same two names, in the same order and length, as
+    ## MEMORY::initialize() does.
+    ## Matched without regard to case: the core reaches the file through
+    ## the filesystem's own matching (a ROM set shipping IPLROM.x1t boots
+    ## fine on macOS), and a name this missed would silently turn the
+    ## check below into a no-op rather than fail loudly.
+    const IplSize = 0x8000 # IPL_ROM_FILE_SIZE, vm/x1/x1.h
+    for name in ["IPLROM.X1T", "IPL.ROM"]:
+      for found in walkFiles(paths.romsDir() / "*"):
+        if cmpIgnoreCase(found.extractFilename(), name) != 0:
+          continue
+        try:
+          var data = readFile(found)
+          if data.len > IplSize:
+            data.setLen IplSize
+          return deflate.crc32(data)
+        except CatchableError:
+          return 0
+    0
+
+  proc fileFingerprint(path: string): (int, uint32) =
+    ## Size and CRC32 of a disk image, recorded so a load can tell the user
+    ## the file behind a restored drive is not the one the state was made
+    ## with - the state's own copy of the disk still restores fine.
+    try:
+      let data = readFile(path)
+      (data.len, deflate.crc32(data))
+    except CatchableError:
+      (0, 0'u32)
+
+  proc thumbnailPng(): seq[byte] =
+    ## Half-scale snapshot of the frame already on screen (640x400 ->
+    ## 320x200). Nearest-neighbour: the source is a 1:1 emulator frame, so
+    ## dropping every other pixel is what a downscale of it looks like
+    ## anyway, and it keeps this off the save path's critical timing.
+    let fb = bx1GetFramebuffer(h)
+    let w = bx1GetScreenWidth(h).int
+    let ht = bx1GetScreenHeight(h).int
+    if fb == nil or w < 2 or ht < 2:
+      return @[]
+    let tw = w div 2
+    let th = ht div 2
+    var rgb = newSeq[byte](tw * th * 3)
+    for y in 0 ..< th:
+      for x in 0 ..< tw:
+        let px = fb[(y * 2) * w + x * 2] # ARGB8888, alpha unused
+        let o = (y * tw + x) * 3
+        rgb[o] = byte(px shr 16)
+        rgb[o + 1] = byte(px shr 8)
+        rgb[o + 2] = byte(px)
+    try:
+      deflate.encodePng(tw, th, rgb)
+    except CatchableError:
+      @[] # a state without a thumbnail is still a valid state
+
+  proc currentMeta(): StateMeta =
+    result = StateMeta(
+      savedAt: getTime().toUnix(),
+      producer: "BubiX1turboZ " & appVersion,
+      coreStateId: bx1CoreStateId(),
+      machine: Machine,
+      iplCrc32: iplFingerprint(),
+      reinit: ReinitConfig(
+        soundType: bx1GetSoundType(h).int,
+        printerType: bx1GetPrinterType(h).int,
+        serialType: bx1GetSerialType(h).int,
+        soundFrequency: bx1GetSoundFrequency(h).int,
+        soundLatency: bx1GetSoundLatency(h).int),
+      runtime: RuntimeConfig(
+        monitorType: bx1GetMonitorType(h).int,
+        driveType: bx1GetDriveType(h).int),
+      cpuPower: bx1GetCpuPower(h).int,
+      fullSpeed: fullSpeed)
+    for drv in 0 ..< FloppyDrives:
+      result.runtime.correctDiskTiming.add bx1GetCorrectDiskTiming(h, drv.cint) != 0
+      result.runtime.ignoreDiskCrc.add bx1GetIgnoreDiskCrc(h, drv.cint) != 0
+      let index = driveIndex[drv]
+      if index < 0 or index >= driveSet[drv].entries.len:
+        result.drives.add DriveState(occupied: false)
+      else:
+        let e = driveSet[drv].entries[index]
+        let (size, crc) = fileFingerprint(e.path)
+        result.drives.add DriveState(
+          occupied: true,
+          source: (if driveSource[drv].len > 0: driveSource[drv] else: e.path),
+          image: e.path, bank: e.bank, label: e.label,
+          imageSize: size, imageCrc32: crc,
+          writeProtected: bx1GetFloppyWriteProtected(h, drv.cint) != 0)
+    for d in result.drives:
+      if d.occupied:
+        result.title = d.source.extractFilename().changeFileExt("")
+        break
+
+  proc refreshStateMenus() =
+    ## Occupied slots name their title and when they were taken; empty ones
+    ## stay listed (the slot number is the point) but cannot be loaded.
+    for slot in 0 ..< StateSlots:
+      let path = paths.stateSlotPath(slot)
+      var caption = "State " & $slot
+      var occupied = false
+      if fileExists(path):
+        try:
+          caption &= " - " & savestate.describe(savestate.readInfo(path))
+          occupied = true
+        except CatchableError:
+          caption &= " - (unreadable)"
+      saveStateItems[slot].title = caption
+      loadStateItems[slot].title = caption
+      loadStateItems[slot].enabled = occupied
+    quickLoadItem.enabled = fileExists(paths.stateSlotPath(QuickSlot))
+
+  proc saveStateTo(path: string) =
+    createDir paths.scratchDir() # $TMPDIR can be reaped under a long session
+    let blob = scratch("save.vmst")
+    if bx1VmStateSave(h, blob.cstring) == 0:
+      filedialog.message("Save State", "The machine state could not be captured.")
+      return
+    try:
+      savestate.save(path, blob, currentMeta(), thumbnailPng())
+    except CatchableError as e:
+      filedialog.message("Save State", e.msg)
+    finally:
+      removeFile(blob)
+    refreshStateMenus()
+
+  proc restoreDrives(m: StateMeta): string =
+    ## Puts the disks the state was taken with back in the drives, through
+    ## the ordinary mount path, and returns a warning for the caller to
+    ## show (empty when there is nothing to report).
+    ##
+    ## The core inserts a disk about half an emulated second after being
+    ## asked to (EMU::open_floppy_disk ejects first, so the guest notices
+    ## the swap), and that deferred insert reads the image file into the
+    ## drive - which would overwrite the disk contents the VM state is
+    ## about to restore. Hence the wait below: let every insert land
+    ## first, then apply the state on top. The frames this runs are
+    ## thrown away by that same state, so they cost nothing but time.
+    var stale: seq[string]
+    var awaiting: seq[int]
+    for drv in 0 ..< FloppyDrives:
+      if drv >= m.drives.len or not m.drives[drv].occupied:
+        ejectFloppy(drv)
+        continue
+      let d = m.drives[drv]
+      # Rebuild the title's disk list from what the user originally opened
+      # so the menu offers every disk again. Re-resolving is what makes
+      # the labels and per-file grouping come back identical; if the
+      # archive or playlist is gone, the image alone still mounts.
+      var set = diskset.build(floppyImagesOf(d.source))
+      var index = -1
+      for i, e in set.entries:
+        if e.path == d.image and e.bank == d.bank:
+          index = i
+          break
+      if index < 0:
+        set = diskset.build([d.image])
+        index = (if d.bank < set.entries.len: d.bank else: 0)
+      if set.entries.len == 0:
+        stale.add d.image.extractFilename() & " is missing"
+        ejectFloppy(drv)
+        continue
+      driveSet[drv] = set
+      driveSource[drv] = d.source
+      # Only a drive the core actually accepted is worth waiting on below;
+      # one whose image has gone missing would spin out the whole guard.
+      if mountAt(drv, index):
+        awaiting.add drv
+      else:
+        stale.add d.image.extractFilename() & " could not be mounted"
+      bx1SetFloppyWriteProtected(h, drv.cint, d.writeProtected.cint)
+      if d.imageSize > 0:
+        let (size, crc) = fileFingerprint(d.image)
+        if size != d.imageSize or crc != d.imageCrc32:
+          stale.add d.image.extractFilename() & " has changed on disk"
+    var pending = true
+    var guard = 0
+    while pending and guard < 300:
+      pending = false
+      for drv in awaiting:
+        if bx1IsFloppyDiskInserted(h, drv.cint) == 0:
+          pending = true
+      if pending:
+        discard bx1RunFrame(h)
+        inc guard
+    if stale.len > 0:
+      result = "The state was restored, but " & stale.join(", ") & "."
+
+  proc loadStateFrom(path: string) =
+    if not fileExists(path):
+      return
+    var info: StateInfo
+    try:
+      info = savestate.readInfo(path)
+    except CatchableError as e:
+      filedialog.message("Load State", e.msg)
+      return
+    let m = info.meta
+
+    # Everything that can refuse the load is checked before the machine is
+    # touched at all, so a rejected state leaves the session running.
+    if m.coreStateId != bx1CoreStateId():
+      filedialog.message("Load State",
+        "This save state was written against a different build of the " &
+        "emulation core and can no longer be read.")
+      return
+    if m.machine != Machine:
+      filedialog.message("Load State", "This save state is for a different machine.")
+      return
+    let ipl = iplFingerprint()
+    if m.iplCrc32 != 0 and ipl != 0 and m.iplCrc32 != ipl:
+      filedialog.message("Load State",
+        "This save state was made with a different IPL ROM. States carry no " &
+        "ROM data, so restoring one against another ROM would leave the " &
+        "machine in an inconsistent state.")
+      return
+    # Settings the original reacts to by throwing the VM away and building
+    # a new one. This layer replaces device state only and cannot rebuild
+    # the VM (EMU::vm is protected; the rebuild lives inside the core's own
+    # load_state), so a mismatch is refused rather than half-applied.
+    var mismatch = ""
+    # Sound type is in this list, not applied like the settings below it:
+    # VM's constructor builds a different device chain for each value
+    # (x1.cpp:116-125 adds the OPM boards), and VM::process_state checks
+    # every device's typeid name against the stream (x1.cpp:1050-1063), so
+    # a state from another chain would fail the apply and roll back. Say
+    # why up front instead.
+    if m.reinit.soundType != bx1GetSoundType(h).int: mismatch = "sound board"
+    elif m.reinit.printerType != bx1GetPrinterType(h).int: mismatch = "printer"
+    elif m.reinit.serialType != bx1GetSerialType(h).int: mismatch = "serial"
+    elif m.reinit.soundFrequency != bx1GetSoundFrequency(h).int: mismatch = "sound frequency"
+    elif m.reinit.soundLatency != bx1GetSoundLatency(h).int: mismatch = "sound latency"
+    if mismatch.len > 0:
+      filedialog.message("Load State",
+        "This save state was made with a different " & mismatch & " setting, " &
+        "which cannot be changed while the machine is running.")
+      return
+
+    # Everything that can fail without touching the machine happens before
+    # anything that changes it: unpacking the blob is pure file work, so a
+    # corrupt container must not leave the drives holding the state's disks.
+    createDir paths.scratchDir() # $TMPDIR can be reaped under a long session
+    let blob = scratch("load.vmst")
+    try:
+      savestate.extractVm(path, blob)
+    except CatchableError as e:
+      filedialog.message("Load State", e.msg)
+      return
+
+    # The auto key would go on typing into the restored machine; the core's
+    # own load_state stops it for the same reason.
+    bx1StopAutoKey(h)
+    # Devices read these from the global config as they run rather than
+    # storing them in their state, so they have to be in place first.
+    bx1SetMonitorType(h, m.runtime.monitorType.cint)
+    bx1SetDriveType(h, m.runtime.driveType.cint)
+    for drv in 0 ..< FloppyDrives:
+      if drv < m.runtime.correctDiskTiming.len:
+        bx1SetCorrectDiskTiming(h, drv.cint, m.runtime.correctDiskTiming[drv].cint)
+      if drv < m.runtime.ignoreDiskCrc.len:
+        bx1SetIgnoreDiskCrc(h, drv.cint, m.runtime.ignoreDiskCrc[drv].cint)
+    let warning = restoreDrives(m)
+    let applied =
+      bx1VmStateLoad(h, blob.cstring, scratch("rollback.vmst").cstring) != 0
+    removeFile(blob)
+    bx1MuteSound(h)
+    refreshFloppyMenus()
+    if not applied:
+      # The VM state itself rolled back inside the bridge, but the mounts
+      # and settings above did not - say so rather than implying the
+      # session is untouched.
+      filedialog.message("Load State",
+        "This save state could not be applied. The machine kept running " &
+        "from where it was, but the drives now hold the state's disks.")
+      return
+    bx1SetCpuPower(h, m.cpuPower.cint)
+    syncCpuItems()
+    fullSpeed = m.fullSpeed
+    fullSpeedItem.checked = fullSpeed
+    bx1SetFullSpeed(h, fullSpeed.cint)
+    skipFrames = 0
+    if warning.len > 0:
+      filedialog.message("Load State", warning)
+
+  controlMenu.addItem("Quick Save", proc () =
+    saveStateTo(paths.stateSlotPath(QuickSlot)), key = "s")
+  quickLoadItem = controlMenu.addItem("Quick Load", proc () =
+    loadStateFrom(paths.stateSlotPath(QuickSlot)), key = "l")
   let saveStateMenu = controlMenu.addSubmenu("Save State")
   let loadStateMenu = controlMenu.addSubmenu("Load State")
-  proc stateSlotPath(slot: int): string =
-    paths.statesDir() / ("x1turboz.sta" & $slot)
   proc makeSaveStateAction(slot: int): MenuAction =
-    result = proc () = discard bx1SaveState(h, stateSlotPath(slot).cstring)
+    result = proc () = saveStateTo(paths.stateSlotPath(slot))
   proc makeLoadStateAction(slot: int): MenuAction =
-    result = proc () =
-      if fileExists(stateSlotPath(slot)):
-        discard bx1LoadState(h, stateSlotPath(slot).cstring)
-        syncDrivesFromCore()
-  for slot in 0 .. 9:
-    saveStateMenu.addItem("State " & $slot, makeSaveStateAction(slot))
-    loadStateMenu.addItem("State " & $slot, makeLoadStateAction(slot))
+    result = proc () = loadStateFrom(paths.stateSlotPath(slot))
+  for slot in 0 ..< StateSlots:
+    saveStateItems[slot] = saveStateMenu.addItem("State " & $slot,
+                                                 makeSaveStateAction(slot))
+    loadStateItems[slot] = loadStateMenu.addItem("State " & $slot,
+                                                 makeLoadStateAction(slot))
+  refreshStateMenus()
 
   # These three are plain toggles rather than radio groups, so they have to
   # flip their own state - AppKit does not do it for a target/action item.
@@ -656,32 +945,11 @@ proc main() =
     recent = @[]
     refreshRecentMenu())
 
-  # --- CMT menu ---
-  let cmtMenu = nativemenu.addMenu("CMT")
-  cmtMenu.addItem("Play", proc () =
-    # Same single-action rule as FD0/FD1's Insert: a tape inside an archive
-    # opens through the ordinary Play, not a separate item.
-    let path = filedialog.openFile(filedialog.TapeExtensions)
-    if path.len > 0:
-      loadTape(path))
-  cmtMenu.addItem("Rec", proc () =
-    let path = filedialog.saveFile("wav", "recording.wav")
-    if path.len > 0:
-      discard bx1OpenTape(h, path.cstring, 0))
-  cmtMenu.addItem("Eject", proc () = bx1CloseTape(h))
-  cmtMenu.addSeparator()
-  cmtMenu.addItem("Play Button", proc () = bx1TapePushPlay(h))
-  cmtMenu.addItem("Stop Button", proc () = bx1TapePushStop(h))
-  cmtMenu.addItem("Fast Forward", proc () = bx1TapePushFastForward(h))
-  cmtMenu.addItem("Fast Rewind", proc () = bx1TapePushFastRewind(h))
-  cmtMenu.addItem("APSS Forward", proc () = bx1TapePushApssForward(h))
-  cmtMenu.addItem("APSS Rewind", proc () = bx1TapePushApssRewind(h))
-  cmtMenu.addSeparator()
-  let waveShaperItem = cmtMenu.addItem("Waveform Shaper")
-  waveShaperItem.checked = bx1GetWaveShaper(h) != 0
-  waveShaperItem.setAction(proc () =
-    waveShaperItem.checked = not waveShaperItem.checked
-    bx1SetWaveShaper(h, waveShaperItem.checked.cint))
+  # No CMT menu. The deck (open/eject, the transport buttons, the waveform
+  # shaper) is fully wired through the bridge and stays in the build, but
+  # none of it has ever been exercised against a real tape image, so the
+  # menu that opened it is left out rather than shipped untested. Only the
+  # entry point is gone; loadTape and the bx1_tape_* bindings remain.
 
   menusBuilt = true
   refreshFloppyMenus()
@@ -732,8 +1000,10 @@ proc main() =
     @["PSG", "CZ-8BS1 x1", "CZ-8BS1 x2"], @[0, 1, 2], bx1GetSoundType(h).int,
     proc (v: cint) = bx1SetSoundType(h, v))
   soundMenu.addSeparator()
-  # The four analog/mechanical sources the machine mixes in alongside the
-  # synthesized channels.
+  # The drive noise the machine mixes in alongside the synthesized
+  # channels. The original's three CMT sources (noise, signal, voice) sit
+  # here too, but they are left out for the same reason as the CMT menu
+  # above: nothing in this app can put a tape in the deck to hear them.
   proc addToggle(menu: nativemenu.Menu, label: string, get: proc (): bool {.closure.},
                  set: proc (on: cint) {.closure.}) =
     ## A check item that flips its own state (AppKit does not) and pushes
@@ -745,12 +1015,6 @@ proc main() =
       set(item.checked.cint))
   soundMenu.addToggle("Play FDD Noise",
     proc (): bool = bx1GetSoundNoiseFdd(h) != 0, proc (on: cint) = bx1SetSoundNoiseFdd(h, on))
-  soundMenu.addToggle("Play CMT Noise",
-    proc (): bool = bx1GetSoundNoiseCmt(h) != 0, proc (on: cint) = bx1SetSoundNoiseCmt(h, on))
-  soundMenu.addToggle("Play CMT Signal",
-    proc (): bool = bx1GetSoundTapeSignal(h) != 0, proc (on: cint) = bx1SetSoundTapeSignal(h, on))
-  soundMenu.addToggle("Play CMT Voice",
-    proc (): bool = bx1GetSoundTapeVoice(h) != 0, proc (on: cint) = bx1SetSoundTapeVoice(h, on))
 
   let displayMenu = deviceMenu.addSubmenu("Display")
   # "High Resolution" (0) has a genuine glyph rendering fault that the
@@ -770,27 +1034,35 @@ proc main() =
   # uiWindows is exactly the pattern that makes libui-ng's teardown
   # complain, and one live hidden window costs nothing.
   let volumeCount = bx1GetSoundVolumeCount().int
+  # Device names come from the core's own sound_device_caption table
+  # ("PSG", "CZ-8BS1 #1", "CMT (Signal)", "Noise (FDD)", "Noise (CMT)"),
+  # so the labels cannot drift from the channels they control - and the
+  # tape ones are recognised by that same caption rather than by index,
+  # which the table is free to renumber.
+  var volumeDevices: seq[int] # core device indices, CMT ones filtered out
+  for i in 0 ..< volumeCount:
+    if "CMT" notin $bx1GetSoundDeviceCaption(i.cint):
+      volumeDevices.add i
+  # Sliders stay indexed by the core's device number, so the rows that are
+  # skipped simply leave a nil entry nothing ever touches.
   var volumeL = newSeq[Slider](volumeCount)
   var volumeR = newSeq[Slider](volumeCount)
-  let volumeWin = newWindow("Volume", 360, 30 * volumeCount + 40, false)
+  let volumeWin = newWindow("Volume", 360, 30 * volumeDevices.len + 40, false)
   volumeWin.margined = true
   let volumeGrid = newGrid(true)
   proc makeVolumeChanged(dev: int): proc (sender: Slider) =
     result = proc (sender: Slider) =
       bx1SetVolume(h, dev.cint, volumeL[dev].value.cint, volumeR[dev].value.cint)
-  for i in 0 ..< volumeCount:
-    # Device names come from the core's own sound_device_caption table
-    # ("PSG", "CZ-8BS1 #1", "Noise (FDD)", ...), so the labels cannot drift
-    # from the channels they control.
-    volumeGrid.add(newLabel($bx1GetSoundDeviceCaption(i.cint)), 0, i * 2, 1, 2,
+  for row, i in volumeDevices:
+    volumeGrid.add(newLabel($bx1GetSoundDeviceCaption(i.cint)), 0, row * 2, 1, 2,
       false, AlignStart, false, AlignCenter)
     # Range matches the core's own clamp on set_sound_device_volume.
     volumeL[i] = newSlider(-40 .. 0, makeVolumeChanged(i))
     volumeR[i] = newSlider(-40 .. 0, makeVolumeChanged(i))
     volumeL[i].value = bx1GetVolumeL(h, i.cint).int
     volumeR[i].value = bx1GetVolumeR(h, i.cint).int
-    volumeGrid.add(volumeL[i], 1, i * 2, 1, 1, true, AlignFill, false, AlignCenter)
-    volumeGrid.add(volumeR[i], 1, i * 2 + 1, 1, 1, true, AlignFill, false, AlignCenter)
+    volumeGrid.add(volumeL[i], 1, row * 2, 1, 1, true, AlignFill, false, AlignCenter)
+    volumeGrid.add(volumeR[i], 1, row * 2 + 1, 1, 1, true, AlignFill, false, AlignCenter)
   volumeWin.child = volumeGrid
   volumeWin.onClosing = proc (sender: Window): bool =
     # Hide rather than destroy, and return false so libui-ng does not
@@ -949,7 +1221,6 @@ proc main() =
       "; status bar text disabled"
 
   var runFrameSafetyCounter = 0
-  var tapeStatus = ""
   var fpsDisplay = 0
   var drawnFrames = 0
   var lastFpsTicks = getTicks()
@@ -989,11 +1260,12 @@ proc main() =
     # behind the main one (confirmed: an earlier attempt placed it
     # off-screen and nobody noticed). Layout and wording mirror the
     # original Windows app's own status bar (winmain.cpp's
-    # update_status_bar): "FD:" followed by one lamp per drive, a gap,
-    # then "CMT:" and the deck's own message string. All of it comes
-    # from the vendored core unmodified. No HDD section: this app has no
-    # UI path to mount a hard disk (BluePrint/CLAUDE.md - commercial X1
-    # games did not use one), so it would only ever read as idle.
+    # update_status_bar): "FD:" followed by one lamp per drive. All of it
+    # comes from the vendored core unmodified. No HDD section: this app has
+    # no UI path to mount a hard disk (BluePrint/CLAUDE.md - commercial X1
+    # games did not use one), so it would only ever read as idle. The
+    # original's "CMT:" section is left out for the same reason - no tape
+    # can be inserted here, so it would only ever read as empty.
     #
     # The one deliberate departure from the original: the frame rate.
     # The original puts it in the window title ("%s - %d fps (%d %%)");
@@ -1018,7 +1290,6 @@ proc main() =
         lampOff = (60'u8, 60'u8, 60'u8)
         lampOn = (230'u8, 60'u8, 50'u8)
         lampOn2 = (60'u8, 220'u8, 70'u8)
-        tapeOn = (230'u8, 160'u8, 30'u8)
 
       var x = 6.cint
       x = font.draw(renderer, x, textY, "FD:", labelColor[0], labelColor[1], labelColor[2])
@@ -1032,12 +1303,6 @@ proc main() =
         var lampRect = rect(x, lampY, lampW, lampH)
         discard renderer.fillRect(addr lampRect)
         x += lampW + 2
-      x += 8
-
-      x = font.draw(renderer, x, textY, "CMT:", labelColor[0], labelColor[1], labelColor[2])
-      x += 4
-      let (tr, tg, tb) = if bx1IsTapeActive(h) != 0: tapeOn else: labelColor
-      font.draw(renderer, x, textY, tapeStatus, tr, tg, tb)
 
       let fpsText = $fpsDisplay & " fps"
       font.draw(renderer, ScreenWidth.cint - font.width(fpsText) - 6, textY, fpsText,
@@ -1162,15 +1427,11 @@ proc main() =
           nextDrawTicks = frameTicks.float + FrameIntervalMs
         drawFrame()
 
-    # Frame rate and tape message are both sampled on a timer rather than
-    # every frame: the rate needs a window to average over, and the tape
-    # message is a string that has to cross the FFI boundary and be copied.
-    # The original app polls its status bar on the same kind of timer
-    # (winmain.cpp uses 200ms).
+    # Status is sampled on a timer rather than every frame, the way the
+    # original app polls its own status bar (winmain.cpp uses 200ms).
     let nowTicks = getTicks()
     if nowTicks - lastStatusTicks >= StatusPollMs:
-      tapeStatus = $bx1GetTapeMessage(h)
-      # The FD menus are refreshed on the same timer because a disk change
+      # The FD menus are refreshed on this timer because a disk change
       # does not take effect immediately: swapping into an occupied drive
       # makes the core eject and finish the insert about half a second
       # later, so anything derived from "is a disk inserted" (the Write

@@ -134,8 +134,10 @@ int bx1_get_floppy_bank_count(bx1_handle h, int drv);
 /// empty string if out of range.
 const char* bx1_get_floppy_bank_name(bx1_handle h, int drv, int bank);
 /// Path and bank the core currently has on `drv`, or "" / -1 when the drive
-/// is empty. The core stores both in a save state and restores them, so a
-/// UI that tracks them separately has to re-read them after a state load.
+/// is empty. Note that the core records the image file alone - never the
+/// archive or playlist it came from - so this is a coarser answer than a
+/// host that tracks its own mounts already has. bx1_vm_state_save/_load do
+/// not touch this bookkeeping either way (they carry device state only).
 const char* bx1_get_floppy_path(bx1_handle h, int drv);
 int bx1_get_floppy_bank(bx1_handle h, int drv);
 
@@ -224,10 +226,53 @@ int bx1_get_wave_shaper(bx1_handle h);
 // State save/load
 // ----------------------------------------------------------------------
 
-/// Always returns 1: the core's save_state()/load_state() are fire-and
-/// -forget (void return) with no success/failure signal of their own.
-int bx1_save_state(bx1_handle h, const char* path);
-int bx1_load_state(bx1_handle h, const char* path);
+/// These deliberately do NOT call EMU::save_state()/load_state(). Those
+/// write three extra blocks - config, media_status_t and d88_file - whose
+/// on-disk layout depends on _MAX_PATH and whose media bookkeeping the
+/// host layer already keeps in a better form. What is written here is
+/// exactly what the VM's devices serialize, wrapped by the host in its own
+/// container format. See docs/dev/SaveState.md.
+
+/// Writes the VM device state to `path` (raw, uncompressed; the host
+/// compresses it as a container section). Locks the VM internally, so call
+/// it on a frame boundary. Returns 1 on success, 0 if the file could not
+/// be written or a device refused to serialize.
+int bx1_vm_state_save(bx1_handle h, const char* path);
+
+/// Applies a blob previously written by bx1_vm_state_save().
+///
+/// The current state is dumped to `rollback_path` first and restored if
+/// the load fails: VM::process_state() returns false only *after* having
+/// overwritten part of the machine, so without the snapshot a truncated or
+/// mismatched blob would leave the emulator unusable with no way back.
+/// `rollback_path` must be writable and is removed before returning; the
+/// caller picks the location (the core would put it in its own base_dir,
+/// which holds the ROMs).
+///
+/// Returns 1 on success. On 0 the machine is back to what it was, unless
+/// the rollback dump itself could not be written - which is reported as 0
+/// too, so a caller that must know can compare against the pre-call state.
+int bx1_vm_state_load(bx1_handle h, const char* path, const char* rollback_path);
+
+/// Identifies the vendored core's device state layout. The blob above is
+/// opaque to this bridge - it is the vendored devices' own format, with
+/// each device's private STATE_VERSION inside - so a state written by a
+/// different core build cannot be detected any other way. Bump this by
+/// hand whenever src/core/ is re-vendored, and refuse states that carry a
+/// different value.
+uint32_t bx1_core_state_id(void);
+
+/// Config values that make the original's EMU::load_state() throw the VM
+/// away and build a new one. Nothing here has a setter: this bridge cannot
+/// reconstruct the VM (EMU::vm is protected and the only rebuild path is
+/// inside EMU::load_state_tmp), so a host that drives process_state()
+/// directly has to compare these against a state's recorded values and
+/// refuse the load when they differ. Everything the UI *can* change has
+/// its own setter elsewhere in this header.
+int bx1_get_printer_type(bx1_handle h);
+int bx1_get_serial_type(bx1_handle h);
+int bx1_get_sound_frequency(bx1_handle h);
+int bx1_get_sound_latency(bx1_handle h);
 
 // ----------------------------------------------------------------------
 // Speed control

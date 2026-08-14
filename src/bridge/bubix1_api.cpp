@@ -466,16 +466,98 @@ int bx1_get_wave_shaper(bx1_handle h)
 	return config.wave_shaper[0] ? 1 : 0;
 }
 
-int bx1_save_state(bx1_handle h, const char* path)
+namespace {
+
+// Bump on every re-vendoring of src/core/ - see bx1_core_state_id().
+const uint32_t CORE_STATE_ID = 1;
+
+// Written after the device stream so a truncated blob is caught before it
+// is handed to the devices. VM::process_state() itself has no end marker;
+// EMU::save_state() appends the same -1 for the same reason.
+const int32_t STATE_END_MARKER = -1;
+
+// Both halves assume the caller already holds the VM lock.
+bool dump_vm_state(EMU* emu, const char* path)
 {
-	emu_of(h)->save_state(path);
-	return 1;
+	FILEIO* fio = new FILEIO();
+	bool result = false;
+	if(fio->Fopen(path, FILEIO_WRITE_BINARY)) {
+		result = emu->get_vm()->process_state(fio, false);
+		fio->FputInt32_LE(STATE_END_MARKER);
+		fio->Fclose();
+	}
+	delete fio;
+	return result;
 }
 
-int bx1_load_state(bx1_handle h, const char* path)
+bool apply_vm_state(EMU* emu, const char* path)
 {
-	emu_of(h)->load_state(path);
-	return 1;
+	FILEIO* fio = new FILEIO();
+	bool result = false;
+	if(fio->Fopen(path, FILEIO_READ_BINARY)) {
+		result = emu->get_vm()->process_state(fio, true) &&
+		         fio->FgetInt32_LE() == STATE_END_MARKER;
+		fio->Fclose();
+	}
+	delete fio;
+	return result;
+}
+
+}
+
+uint32_t bx1_core_state_id(void)
+{
+	return CORE_STATE_ID;
+}
+
+int bx1_get_printer_type(bx1_handle h)
+{
+	(void)h;
+	return config.printer_type;
+}
+
+int bx1_get_serial_type(bx1_handle h)
+{
+	(void)h;
+	return config.serial_type;
+}
+
+int bx1_get_sound_frequency(bx1_handle h)
+{
+	(void)h;
+	return config.sound_frequency;
+}
+
+int bx1_get_sound_latency(bx1_handle h)
+{
+	(void)h;
+	return config.sound_latency;
+}
+
+int bx1_vm_state_save(bx1_handle h, const char* path)
+{
+	EMU* emu = emu_of(h);
+	emu->lock_vm();
+	bool result = dump_vm_state(emu, path);
+	emu->unlock_vm();
+	return result ? 1 : 0;
+}
+
+int bx1_vm_state_load(bx1_handle h, const char* path, const char* rollback_path)
+{
+	EMU* emu = emu_of(h);
+	emu->lock_vm();
+	// No rollback dump means no way back, so do not touch the machine.
+	bool result = dump_vm_state(emu, rollback_path);
+	if(result) {
+		result = apply_vm_state(emu, path);
+		if(!result) {
+			apply_vm_state(emu, rollback_path);
+		}
+	}
+	FILEIO::RemoveFile(rollback_path);
+	emu->unlock_vm();
+	return result ? 1 : 0;
 }
 
 void bx1_set_cpu_power(bx1_handle h, int power)
