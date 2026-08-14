@@ -215,6 +215,96 @@ const char* bx1_get_floppy_bank_name(bx1_handle h, int drv, int bank)
 	return emu_of(h)->d88_file[drv].disk_name[bank];
 }
 
+const char* bx1_get_floppy_path(bx1_handle h, int drv)
+{
+	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
+		return "";
+	}
+	return emu_of(h)->d88_file[drv].path;
+}
+
+int bx1_get_floppy_bank(bx1_handle h, int drv)
+{
+	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
+		return -1;
+	}
+	return emu_of(h)->d88_file[drv].cur_bank;
+}
+
+namespace {
+/// The smallest a D88 disk header can be: 0x20 bytes of fixed fields plus
+/// 164 track pointers. EMU::open_floppy_disk uses the same bound to decide
+/// whether another disk follows.
+const uint32_t D88_HEADER_SIZE = 0x2b0;
+
+/// Maps the D88 header's own media byte to the dense index the rest of this
+/// API uses (see bx1_create_blank_floppy_disk).
+int dense_media_type(uint8_t header_byte)
+{
+	switch(header_byte) {
+	case MEDIA_TYPE_2D:  return 0;
+	case MEDIA_TYPE_2DD: return 1;
+	case MEDIA_TYPE_2HD: return 2;
+	case MEDIA_TYPE_144: return 3;
+	}
+	return -1;
+}
+
+bool is_d88_family(const char* path)
+{
+	return check_file_extension(path, _T(".d88")) || check_file_extension(path, _T(".d8e")) ||
+	       check_file_extension(path, _T(".d77")) || check_file_extension(path, _T(".1dd"));
+}
+}
+
+int bx1_scan_d88_banks(const char* path, int max_banks, bx1_d88_bank* out)
+{
+	if(path == NULL || out == NULL || max_banks <= 0 || !FILEIO::IsFileExisting(path)) {
+		return 0;
+	}
+	if(!is_d88_family(path)) {
+		// A solid dump carries no header at all, so there is nothing to
+		// report beyond "one disk, unknown everything". Saying so lets the
+		// caller run every image through the same code path.
+		memset(&out[0], 0, sizeof(out[0]));
+		out[0].media_type = -1;
+		return 1;
+	}
+
+	FILEIO* fio = new FILEIO();
+	int count = 0;
+	if(fio->Fopen(path, FILEIO_READ_BINARY)) {
+		fio->Fseek(0, FILEIO_SEEK_END);
+		uint32_t file_size = fio->Ftell(), offset = 0;
+		while(offset + D88_HEADER_SIZE <= file_size && count < max_banks) {
+			bx1_d88_bank* bank = &out[count];
+			memset(bank, 0, sizeof(*bank));
+
+			fio->Fseek(offset, FILEIO_SEEK_SET);
+			fio->Fread(bank->name, 17, 1);
+			bank->name[17] = '\0';
+
+			fio->Fseek(offset + 0x1a, FILEIO_SEEK_SET);
+			bank->write_protected = fio->FgetUint8() != 0 ? 1 : 0;
+			bank->media_type = dense_media_type(fio->FgetUint8());
+
+			fio->Fseek(offset + 0x1c, FILEIO_SEEK_SET);
+			const uint32_t disk_size = fio->FgetUint32_LE();
+			count++;
+			// EMU::open_floppy_disk trusts this self-describing size and
+			// would spin on a zero, filling every bank with the same disk.
+			// A size that cannot hold even a header ends the walk instead.
+			if(disk_size < D88_HEADER_SIZE) {
+				break;
+			}
+			offset += disk_size;
+		}
+		fio->Fclose();
+	}
+	delete fio;
+	return count;
+}
+
 int bx1_open_tape(bx1_handle h, const char* path, int play)
 {
 	EMU* emu = emu_of(h);

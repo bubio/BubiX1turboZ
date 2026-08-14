@@ -105,6 +105,57 @@ char *bx1_dialog_save_file(const char *extensions, const char *suggested_name)
 	}
 }
 
+/*
+	Disk chooser for an image that turned out to hold several disks.
+
+	Defined in nativemenu.m, which needs the same decoding for the same D88
+	names; see the comment there for why raw Shift-JIS reaches this layer.
+*/
+extern NSString *bx1_ns_string(const char *bytes);
+
+/*
+	`rows` are display strings, one per disk, already carrying their index so
+	no two are equal - NSPopUpButton silently drops an item whose title
+	duplicates an existing one, which would otherwise make two identically
+	named disks unreachable.
+
+	Returns the chosen row, or -1 if the user cancelled. A pop-up rather than
+	a table keeps this to an app-modal alert, matching the file panels above:
+	no parent window, no libui modal bookkeeping.
+*/
+int bx1_dialog_choose_disk(const char *title, const char *const *rows, int count,
+                           int initial)
+{
+	@autoreleasepool {
+		NSAlert *alert;
+		NSPopUpButton *popup;
+		int i;
+
+		if (rows == NULL || count <= 0) {
+			return -1;
+		}
+		alert = [[[NSAlert alloc] init] autorelease];
+		[alert setMessageText:bx1_ns_string(title)];
+		[alert addButtonWithTitle:@"Insert"];
+		[alert addButtonWithTitle:@"Cancel"];
+
+		popup = [[[NSPopUpButton alloc]
+			initWithFrame:NSMakeRect(0, 0, 360, 26) pullsDown:NO] autorelease];
+		for (i = 0; i < count; i++) {
+			[popup addItemWithTitle:bx1_ns_string(rows[i])];
+		}
+		if (initial >= 0 && initial < count) {
+			[popup selectItemAtIndex:initial];
+		}
+		[alert setAccessoryView:popup];
+
+		if ([alert runModal] != NSAlertFirstButtonReturn) {
+			return -1;
+		}
+		return (int)[popup indexOfSelectedItem];
+	}
+}
+
 void bx1_dialog_free(char *text)
 {
 	free(text);

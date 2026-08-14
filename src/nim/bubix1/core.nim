@@ -51,6 +51,21 @@ proc bx1GetFloppyBankCount*(h: Bx1Handle, drv: cint): cint
   {.importc: "bx1_get_floppy_bank_count", bx1.}
 proc bx1GetFloppyBankName*(h: Bx1Handle, drv, bank: cint): cstring
   {.importc: "bx1_get_floppy_bank_name", bx1.}
+proc bx1GetFloppyPath*(h: Bx1Handle, drv: cint): cstring
+  {.importc: "bx1_get_floppy_path", bx1.}
+proc bx1GetFloppyBank*(h: Bx1Handle, drv: cint): cint
+  {.importc: "bx1_get_floppy_bank", bx1.}
+
+type
+  Bx1D88Bank* {.importc: "bx1_d88_bank", header: "bubix1_api.h", bycopy.} = object
+    ## One disk inside a D88-family image. `name` is raw header bytes in
+    ## whatever encoding the image used, so it must be decoded host-side.
+    name*: array[18, char]
+    mediaType* {.importc: "media_type".}: cint
+    writeProtected* {.importc: "write_protected".}: cint
+
+proc bx1ScanD88Banks*(path: cstring, maxBanks: cint, outBanks: ptr Bx1D88Bank): cint
+  {.importc: "bx1_scan_d88_banks", bx1.}
 
 proc bx1OpenTape*(h: Bx1Handle, path: cstring, play: cint): cint
   {.importc: "bx1_open_tape", bx1.}

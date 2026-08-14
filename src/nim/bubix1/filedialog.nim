@@ -11,6 +11,8 @@ proc bx1DialogSaveFile(extensions, suggestedName: cstring): cstring
   {.importc: "bx1_dialog_save_file", cdecl.}
 proc bx1DialogFree(text: cstring) {.importc: "bx1_dialog_free", cdecl.}
 proc bx1DialogMessage(title, body: cstring) {.importc: "bx1_dialog_message", cdecl.}
+proc bx1DialogChooseDisk(title: cstring, rows: cstringArray, count, initial: cint): cint
+  {.importc: "bx1_dialog_choose_disk", cdecl.}
 
 const
   DiskExtensions* = "d88,d77,d8e,1dd,2d,zip,7z,m3u,m3u8"
@@ -35,3 +37,13 @@ proc saveFile*(extensions = "", suggestedName = ""): string =
 
 proc message*(title, body: string) =
   bx1DialogMessage(title.cstring, body.cstring)
+
+proc chooseDisk*(title: string, rows: openArray[string], initial = 0): int =
+  ## Asks which disk of a multi-disk image to insert. Returns -1 if the user
+  ## cancelled. `rows` may hold raw Shift-JIS from a D88 header; the dialog
+  ## decodes it (see filedialog.m).
+  if rows.len == 0:
+    return -1
+  var raw = allocCStringArray(rows)
+  result = bx1DialogChooseDisk(title.cstring, raw, rows.len.cint, initial.cint).int
+  deallocCStringArray(raw)

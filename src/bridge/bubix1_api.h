@@ -133,6 +133,36 @@ int bx1_get_floppy_bank_count(bx1_handle h, int drv);
 /// UTF-8 (or whatever encoding the D88 header used) disk name for `bank`;
 /// empty string if out of range.
 const char* bx1_get_floppy_bank_name(bx1_handle h, int drv, int bank);
+/// Path and bank the core currently has on `drv`, or "" / -1 when the drive
+/// is empty. The core stores both in a save state and restores them, so a
+/// UI that tracks them separately has to re-read them after a state load.
+const char* bx1_get_floppy_path(bx1_handle h, int drv);
+int bx1_get_floppy_bank(bx1_handle h, int drv);
+
+/// One disk inside a D88-family image, as bx1_scan_d88_banks reports it.
+typedef struct {
+	/// The 17 header bytes at offset 0x00, NUL-terminated. Whatever encoding
+	/// the image was written in (Shift-JIS in practice); decoding is the
+	/// host's job, exactly as for bx1_get_floppy_bank_name.
+	char name[18];
+	/// 0 = 2D, 1 = 2DD, 2 = 2HD, 3 = 1.44M, -1 = unknown. Same dense
+	/// encoding bx1_create_blank_floppy_disk takes, not the header's own.
+	int media_type;
+	/// Header byte 0x1a; the medium's own flag, not the drive's.
+	int write_protected;
+} bx1_d88_bank;
+
+/// Enumerates the disks in a D88-family image WITHOUT touching any drive, so
+/// the host can offer a choice before committing one to a drive.
+/// bx1_get_floppy_bank_count/_name cannot serve that purpose: the core only
+/// fills them as a side effect of bx1_open_floppy, and it records neither the
+/// media type nor the write-protect flag.
+///
+/// Writes at most `max_banks` entries into `out` and returns how many it
+/// wrote. A readable image that is not D88-family (a solid .2d/.2hd dump)
+/// counts as a single unnamed disk, so callers can treat every image the
+/// same way. Returns 0 for an unreadable or malformed file.
+int bx1_scan_d88_banks(const char* path, int max_banks, bx1_d88_bank* out);
 
 /// play != 0: play back path as a CMT tape image. play == 0: record onto
 /// it. Returns 1 if a tape is inserted after the call, 0 otherwise.

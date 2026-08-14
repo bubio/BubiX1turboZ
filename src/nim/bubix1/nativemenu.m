@@ -61,8 +61,11 @@ static NSMutableDictionary *items_by_tag = nil;
 	only), so a Japanese multi-disk image hands us raw Shift-JIS, as do
 	Shift-JIS filenames coming out of bsdtar. Try UTF-8, then Shift-JIS, and
 	fall back to a lossy read so a title is always produced.
+
+	Not static: filedialog.m's disk picker shows the same D88 names and has
+	to decode them the same way. One decoder, one place to fix.
 */
-static NSString *to_nsstring(const char *bytes)
+NSString *bx1_ns_string(const char *bytes)
 {
 	NSString *s;
 
@@ -104,7 +107,7 @@ void bx1_nmenu_set_action(bx1_nmenu_action_fn fn)
 // story. Nothing here wants automatic validation.
 static NSMenu *make_menu(const char *title)
 {
-	NSMenu *menu = [[NSMenu alloc] initWithTitle:to_nsstring(title)];
+	NSMenu *menu = [[NSMenu alloc] initWithTitle:bx1_ns_string(title)];
 	[menu setAutoenablesItems:NO];
 	return menu;
 }
@@ -120,7 +123,7 @@ void *bx1_nmenu_add_toplevel(const char *title)
 		return NULL;
 	}
 	menu = make_menu(title);
-	item = [[NSMenuItem alloc] initWithTitle:to_nsstring(title)
+	item = [[NSMenuItem alloc] initWithTitle:bx1_ns_string(title)
 		action:NULL keyEquivalent:@""];
 	[item setSubmenu:menu];
 	[bar addItem:item];
@@ -137,7 +140,7 @@ void *bx1_nmenu_add_submenu(void *parent, const char *title)
 		return NULL;
 	}
 	menu = make_menu(title);
-	item = [[NSMenuItem alloc] initWithTitle:to_nsstring(title)
+	item = [[NSMenuItem alloc] initWithTitle:bx1_ns_string(title)
 		action:NULL keyEquivalent:@""];
 	[item setSubmenu:menu];
 	[(NSMenu *)parent addItem:item];
@@ -158,7 +161,7 @@ void bx1_nmenu_add_item(void *menu, const char *title, int tag, const char *key,
 	if (menu == NULL) {
 		return;
 	}
-	item = [[NSMenuItem alloc] initWithTitle:to_nsstring(title)
+	item = [[NSMenuItem alloc] initWithTitle:bx1_ns_string(title)
 		action:@selector(menuAction:) keyEquivalent:@""];
 	[item setTarget:target];
 	[item setTag:tag];
@@ -229,5 +232,5 @@ void bx1_nmenu_set_hidden(int tag, int hidden)
 
 void bx1_nmenu_set_item_title(int tag, const char *title)
 {
-	[item_for_tag(tag) setTitle:to_nsstring(title)];
+	[item_for_tag(tag) setTitle:bx1_ns_string(title)];
 }

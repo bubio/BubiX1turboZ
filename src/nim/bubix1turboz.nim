@@ -36,6 +36,7 @@ import bubix1/paths
 import bubix1/cocoamenu
 import bubix1/recentfiles
 import bubix1/archive
+import bubix1/diskset
 import bubix1/ankfont
 import bubix1/nativemenu
 import bubix1/clipboard
@@ -54,10 +55,11 @@ const
   StatusBarHeight = 24
   WindowHeight = ScreenHeight + StatusBarHeight
   RecentSlots = 8 # matches MAX_HISTORY in src/core/config.h
-  # Fixed slots for the D88 multi-bank picker. Matches the core's own
-  # MAX_D88_BANKS (src/core/emu.h) so a large compilation image cannot have
-  # disks the UI silently cannot reach; unused slots are hidden, not shown.
-  DiskSlots = 64
+  # Fixed slots for a drive's disk list. Matches diskset.MaxBanks (and so the
+  # core's MAX_D88_BANKS); unused slots are hidden, not shown. An archive
+  # holding more images than this lists only the first ones in the menu, but
+  # the Insert chooser enumerates all of them, so none become unreachable.
+  DiskSlots = diskset.MaxBanks
   # The core is built with USE_FLOPPY_DISK=4, but BluePrint calls for two
   # drives in the UI (commercial X1 titles never needed more). Reducing the
   # feature here rather than in the core is the standing policy - see
@@ -126,73 +128,146 @@ proc main() =
   # They are filled in after win.show() (there is no menu bar before that),
   # so the helpers below are written to be safe when called earlier, during
   # the pre-menu part of startup.
-  var recentItems: array[FloppyDrives, array[RecentSlots, MenuItemRef]]
-  var recentNoneItems: array[FloppyDrives, MenuItemRef]
-  var bankPathItems: array[FloppyDrives, MenuItemRef]
-  var bankItems: array[FloppyDrives, array[DiskSlots, MenuItemRef]]
-  var bankSepItems: array[FloppyDrives, MenuItemRef]
+  var recentItems: array[RecentSlots, MenuItemRef]
+  var recentNoneItem: MenuItemRef
+  var setCaptionItems: array[FloppyDrives, MenuItemRef]
+  var groupCaptionItems: array[FloppyDrives, array[DiskSlots, MenuItemRef]]
+  var diskItems: array[FloppyDrives, array[DiskSlots, MenuItemRef]]
+  var diskSepItems: array[FloppyDrives, MenuItemRef]
   var writeProtectItems: array[FloppyDrives, MenuItemRef]
   var menusBuilt = false
 
-  # What each drive currently holds. The path is kept so the bank picker
-  # can re-issue bx1OpenFloppy with a different bank index, and the bank
-  # index so the picker can show which one is active - the core exposes no
-  # getter for its own cur_bank.
-  var drivePath: array[FloppyDrives, string]
-  var driveBank: array[FloppyDrives, int]
+  # Every disk the user's last mount request resolved to, per drive, plus
+  # which of them is currently in. Both drives normally hold the same set
+  # and differ only in the index, which is what makes "swap to disk 3" a
+  # menu click: the entry already carries the (path, bank) to re-open.
+  # See diskset.nim for why playlists are flattened into this too.
+  var driveSet: array[FloppyDrives, DiskSet]
+  var driveIndex: array[FloppyDrives, int] = [-1, -1] # -1: nothing inserted
+  # What the user actually opened - the archive or playlist, not the image
+  # extracted out of it - shown as the caption above the disk list.
+  var driveSource: array[FloppyDrives, string]
 
   proc refreshFloppyMenu(drv: int) =
-    ## Brings one FD menu's variable parts back in line with the machine:
-    ## the D88 bank list, the write-protect state, and the recent files.
-    ## Mirrors the original's update_floppy_disk_menu (winmain.cpp), which
-    ## rebuilds the same tail of the same menu on every open.
+    ## Brings one drive submenu's variable parts back in line with the
+    ## machine: the disk list and the write-protect state. Mirrors the
+    ## original's update_floppy_disk_menu (winmain.cpp), which rebuilds the
+    ## same tail of the same menu on every open.
     if not menusBuilt:
       return
-    let bankCount = bx1GetFloppyBankCount(h, drv.cint)
-    # The original only shows the bank list for an image that actually has
-    # more than one disk in it; a plain single-disk D88 gets no section.
-    let multiBank = bankCount > 1
-    bankPathItems[drv].hidden = not multiBank
-    if multiBank:
-      bankPathItems[drv].title = drivePath[drv].extractFilename()
-    bankSepItems[drv].hidden = not multiBank
+    let entries = driveSet[drv].entries
+    let groups = driveSet[drv].groups
+    # Like the original, the list only appears for a mount that actually
+    # produced more than one disk; a plain single-disk image gets no section.
+    let multiDisk = entries.len > 1
+    # Per-file captions only earn their space when the disks came from more
+    # than one file, exactly as Bubilator88 shows its image groups.
+    let showGroups = multiDisk and groups.len > 1
+    setCaptionItems[drv].hidden = not multiDisk
+    if multiDisk:
+      setCaptionItems[drv].title = driveSource[drv].extractFilename()
+    diskSepItems[drv].hidden = not multiDisk
     for i in 0 ..< DiskSlots:
-      let show = multiBank and i < bankCount
-      bankItems[drv][i].hidden = not show
+      let show = multiDisk and i < entries.len
+      diskItems[drv][i].hidden = not show
+      var caption = ""
       if show:
-        bankItems[drv][i].title = &"{i+1}: " & $bx1GetFloppyBankName(h, drv.cint, i.cint)
-        bankItems[drv][i].checked = (driveBank[drv] == i)
+        diskItems[drv][i].title =
+          (if showGroups: "  " else: "") & &"{i+1}: " & entries[i].label
+        diskItems[drv][i].checked = (driveIndex[drv] == i)
+        if showGroups:
+          for g in groups:
+            if g.start == i:
+              caption = g.name
+              break
+      groupCaptionItems[drv][i].hidden = caption.len == 0
+      if caption.len > 0:
+        groupCaptionItems[drv][i].title = caption
 
     let inserted = bx1IsFloppyDiskInserted(h, drv.cint) != 0
     writeProtectItems[drv].enabled = inserted
     writeProtectItems[drv].checked = inserted and bx1GetFloppyWriteProtected(h, drv.cint) != 0
 
+  proc refreshRecentMenu() =
+    ## One shared list for the whole app, rather than the per-drive lists
+    ## the original keeps: an entry names a title, not a drive, and picking
+    ## one starts that title in both drives.
+    if not menusBuilt:
+      return
     for i in 0 ..< RecentSlots:
       let show = i < recent.len
-      recentItems[drv][i].hidden = not show
+      recentItems[i].hidden = not show
       if show:
-        recentItems[drv][i].title = recent[i].extractFilename()
-    recentNoneItems[drv].hidden = recent.len > 0
+        recentItems[i].title = recent[i].extractFilename()
+    recentNoneItem.hidden = recent.len > 0
 
   proc refreshFloppyMenus() =
     for drv in 0 ..< FloppyDrives:
       refreshFloppyMenu(drv)
+    refreshRecentMenu()
 
   proc rememberRecent(path: string) =
     recent = recentfiles.pushFront(recent, path)
-    refreshFloppyMenus()
+    refreshRecentMenu()
 
-  proc mountFloppy(drv: int, path: string, bank: int): bool =
-    result = bx1OpenFloppy(h, drv.cint, path.cstring, bank.cint) != 0
+  proc mountAt(drv, index: int): bool =
+    ## Inserts one disk of the set the drive is already holding. Swapping
+    ## between them is just this call with a different index: the core takes
+    ## the (path, bank) pair straight from the entry.
+    let entries = driveSet[drv].entries
+    if index < 0 or index >= entries.len:
+      return false
+    result = bx1OpenFloppy(h, drv.cint,
+                           entries[index].path.cstring, entries[index].bank.cint) != 0
     if result:
-      drivePath[drv] = path
-      driveBank[drv] = bank
+      driveIndex[drv] = index
     refreshFloppyMenu(drv)
 
   proc ejectFloppy(drv: int) =
     bx1CloseFloppy(h, drv.cint)
-    driveBank[drv] = -1
+    driveSet[drv] = DiskSet()
+    driveIndex[drv] = -1
+    driveSource[drv] = ""
     refreshFloppyMenu(drv)
+
+  proc syncDrivesFromCore() =
+    ## Re-reads what the core has in each drive. A save state carries the
+    ## core's own record of that (EMU::d88_file, saved and restored with the
+    ## rest of the machine), so after a load the UI could otherwise be
+    ## listing the disks of a title that is no longer mounted.
+    ##
+    ## The core remembers one file per drive, not the archive or playlist it
+    ## came from, so a restored set covers that file alone; the other files
+    ## of a multi-file title become reachable again by reopening it. The
+    ## core also records no path at all for a solid (non-D88) image, which
+    ## has nothing to switch between anyway.
+    for drv in 0 ..< FloppyDrives:
+      let path = $bx1GetFloppyPath(h, drv.cint)
+      let bank = bx1GetFloppyBank(h, drv.cint).int
+      if path.len == 0 or bank < 0:
+        driveSet[drv] = DiskSet()
+        driveIndex[drv] = -1
+        driveSource[drv] = ""
+      else:
+        driveSet[drv] = diskset.build([path])
+        driveSource[drv] = path
+        driveIndex[drv] = bank
+      refreshFloppyMenu(drv)
+
+  proc pickerRows(s: DiskSet): seq[string] =
+    ## One line per disk for the Insert chooser, carrying what Bubilator88's
+    ## sheet shows: position, name, medium, and whether it is write
+    ## protected. The leading number also keeps the lines distinct, which
+    ## NSPopUpButton requires (see filedialog.m); it counts from 1 to match
+    ## the same disks as the drive menu numbers them.
+    for i, e in s.entries:
+      var row = &"{i+1}: " & e.label
+      let medium = diskset.mediaLabel(e.mediaType)
+      if medium.len > 0:
+        row.add "  " & medium
+      if e.writeProtected:
+        row.add "  🔒"
+      result.add row
 
   proc resolveOrWarn(path: string): seq[string] =
     # Catches OSError as well as IOError: archive.nim reaches the filesystem
@@ -206,7 +281,7 @@ proc main() =
       stderr.writeLine "bubix1turboz: " & e.msg
       result = @[]
 
-  proc loadMedia(path: string, startDrive = 0, reset = false) =
+  proc loadMedia(path: string, startDrive = 0, bothDrives = false, reset = false) =
     ## Single entry point for anything that can end up in a drive: a bare
     ## disk image, a 7z/zip archive, or an m3u/m3u8 playlist. Every way of
     ## inserting a disk goes through here - FD0/FD1's Insert, their Recent
@@ -214,17 +289,23 @@ proc main() =
     ## like a bare .d88, with no separate "open archive" action to pick
     ## between (the same single-action model Bubilator88 uses).
     ##
-    ## `reset` is what still distinguishes those callers: dropping a file
-    ## on the window boots it (BluePrint line 32), while inserting one from
-    ## the menu leaves the running machine alone, so swapping disks
-    ## mid-game does not throw the session away.
+    ## Whatever the input resolves to becomes one flat list of disks (see
+    ## diskset.nim), which both drives keep so that any disk of the title
+    ## can be swapped in later from either menu.
+    ##
+    ## `bothDrives` picks between the two mount modes Bubilator88 offers:
+    ## filling FD0 and FD1 with the title's first two disks (what a 2-disk
+    ## game wants, and what a drop does), or putting a single chosen disk
+    ## into `startDrive` - asking which one when there is a choice.
+    ##
+    ## `reset` distinguishes the callers further: dropping a file on the
+    ## window boots it (BluePrint line 32), while inserting one from the
+    ## menu leaves the running machine alone, so swapping disks mid-game
+    ## does not throw the session away.
     let resolved = resolveOrWarn(path)
     if resolved.len == 0:
       return
-    # A multi-disk set fills consecutive drives starting from the one the
-    # user asked for, so picking a playlist from FD1's menu loads disk 1
-    # into FD1 rather than always into FD0.
-    var drv = startDrive
+    var images: seq[string]
     var mounted = false
     for p in resolved:
       case archive.classify(p)
@@ -232,11 +313,34 @@ proc main() =
         if bx1OpenTape(h, p.cstring, 1) != 0:
           mounted = true
       of archive.mkFloppy:
-        if drv < FloppyDrives and mountFloppy(drv, p, 0):
-          mounted = true
-          inc drv
+        images.add p
       of archive.mkArchive, archive.mkPlaylist, archive.mkUnknown:
         discard
+
+    let disks = diskset.build(images)
+    if disks.entries.len > 0:
+      if bothDrives:
+        for drv in 0 ..< FloppyDrives:
+          if drv < disks.entries.len:
+            driveSet[drv] = disks
+            driveSource[drv] = path
+            if mountAt(drv, drv):
+              mounted = true
+          else:
+            # A one-disk title must not leave the previous game's disk
+            # sitting in FD1, which is why this ejects rather than skips.
+            ejectFloppy(drv)
+      else:
+        var index = 0
+        if disks.entries.len > 1:
+          index = filedialog.chooseDisk("Select a disk to insert", pickerRows(disks))
+          if index < 0:
+            return # cancelled: leave the drive, and Recent, untouched
+        let drv = min(startDrive, FloppyDrives - 1)
+        driveSet[drv] = disks
+        driveSource[drv] = path
+        if mountAt(drv, index):
+          mounted = true
     # `mounted` means "the core accepted at least one image", not "the image
     # was valid" - bx1_open_floppy cannot tell us the latter (see its
     # comment), so a corrupt file still lands in Recent. The original
@@ -402,6 +506,7 @@ proc main() =
     result = proc () =
       if fileExists(stateSlotPath(slot)):
         discard bx1LoadState(h, stateSlotPath(slot).cstring)
+        syncDrivesFromCore()
   for slot in 0 .. 9:
     saveStateMenu.addItem("State " & $slot, makeSaveStateAction(slot))
     loadStateMenu.addItem("State " & $slot, makeLoadStateAction(slot))
@@ -426,12 +531,17 @@ proc main() =
     bx1SetRomajiToKana(h, romajiItem.checked.cint))
   syncCpuItems()
 
-  # --- FD0 / FD1 menus ---
-  # One menu per drive, wording and order taken from the original's FD0
-  # menu (src/res/x1turboz.rc) plus the tail its update_floppy_disk_menu
-  # builds at runtime: the D88 bank list for a multi-disk image, then the
-  # recent files. Only two drives, per BluePrint; the original's FD2/FD3
-  # and all four HD menus are not built.
+  # --- Disk menu ---
+  # One menu for the whole floppy subsystem, with a submenu per drive -
+  # Bubilator88's structure (Bubilator88App.swift's DiskCommands) rather
+  # than the original's one top-level menu per drive. What each drive holds
+  # is a property of that drive, but "open a title" and "the titles I opened
+  # recently" are not, and the original's layout has to duplicate them.
+  #
+  # Each drive submenu keeps the original's own wording and order
+  # (src/res/x1turboz.rc) plus the tail its update_floppy_disk_menu builds
+  # at runtime. Only two drives, per BluePrint; the original's FD2/FD3 and
+  # all four HD menus are not built.
   proc makeInsertAction(drv: int): MenuAction =
     # One Insert for every supported format. A 7z/zip archive or an
     # m3u/m3u8 playlist is opened with exactly the same action as a bare
@@ -440,22 +550,36 @@ proc main() =
     result = proc () =
       let path = filedialog.openFile(filedialog.DiskExtensions)
       if path.len > 0:
-        loadMedia(path, drv)
+        loadMedia(path, startDrive = drv)
+  proc insertBothAction(): MenuAction =
+    ## Bubilator88's "Drive 1&2" mount, which is how a 2-disk game is
+    ## normally started: no chooser, first disk in FD0, second in FD1.
+    result = proc () =
+      let path = filedialog.openFile(filedialog.DiskExtensions)
+      if path.len > 0:
+        loadMedia(path, bothDrives = true)
   proc makeEjectAction(drv: int): MenuAction =
     result = proc () = ejectFloppy(drv)
   proc makeBlankAction(drv, mediaType: int): MenuAction =
+    ## Stays inside the drive submenu, as in the original: a blank disk is
+    ## made in order to put it in a particular drive, so the drive is part
+    ## of the request rather than something to infer. (Bubilator88 has one
+    ## Create Blank Disk at the top and picks the first free drive itself.)
     result = proc () =
       let path = filedialog.saveFile(filedialog.BlankDiskExtensions, "blank.d88")
       if path.len > 0 and bx1CreateBlankFloppyDisk(h, path.cstring, mediaType.cint) != 0:
-        discard mountFloppy(drv, path, 0)
-  proc makeBankAction(drv, bank: int): MenuAction =
-    result = proc () =
-      if drivePath[drv].len > 0:
-        discard mountFloppy(drv, drivePath[drv], bank)
-  proc makeRecentAction(drv, idx: int): MenuAction =
+        driveSet[drv] = diskset.build([path])
+        driveSource[drv] = path
+        discard mountAt(drv, 0)
+  proc makeDiskAction(drv, index: int): MenuAction =
+    result = proc () = discard mountAt(drv, index)
+  proc makeRecentAction(idx: int): MenuAction =
     result = proc () =
       if idx < recent.len:
-        loadMedia(recent[idx], drv)
+        # An entry names a title, not a disk in a drive, so reopening one
+        # starts it the way a drop does: first two disks across both drives,
+        # with no chooser in between.
+        loadMedia(recent[idx], bothDrives = true)
   proc makeToggleAction(item: MenuItemRef, drv: int,
                         setter: proc (h: Bx1Handle, drv, enabled: cint) {.cdecl.}): MenuAction =
     ## A per-drive check item that flips its own state (AppKit does not do
@@ -464,13 +588,15 @@ proc main() =
       item.checked = not item.checked
       setter(h, drv.cint, item.checked.cint)
 
+  let diskMenu = nativemenu.addMenu("Disk")
+
   for drv in 0 ..< FloppyDrives:
-    let fd = nativemenu.addMenu("FD" & $drv)
-    fd.addItem("Insert", makeInsertAction(drv))
+    let fd = diskMenu.addSubmenu("FD" & $drv)
+    fd.addItem("Insert…", makeInsertAction(drv), key = $(drv + 1))
     fd.addItem("Eject", makeEjectAction(drv))
-    fd.addItem("Insert Blank 2D Disk", makeBlankAction(drv, 0))
-    fd.addItem("Insert Blank 2DD Disk", makeBlankAction(drv, 1))
-    fd.addItem("Insert Blank 2HD Disk", makeBlankAction(drv, 2))
+    fd.addItem("Insert Blank 2D Disk…", makeBlankAction(drv, 0))
+    fd.addItem("Insert Blank 2DD Disk…", makeBlankAction(drv, 1))
+    fd.addItem("Insert Blank 2HD Disk…", makeBlankAction(drv, 2))
     fd.addSeparator()
     writeProtectItems[drv] = fd.addItem("Write Protected")
     let correctTiming = fd.addItem("Correct Timing")
@@ -490,22 +616,45 @@ proc main() =
     correctTiming.setAction(makeToggleAction(correctTiming, drv, bx1SetCorrectDiskTiming))
     ignoreCrc.checked = bx1GetIgnoreDiskCrc(h, drv.cint) != 0
     ignoreCrc.setAction(makeToggleAction(ignoreCrc, drv, bx1SetIgnoreDiskCrc))
-    fd.addSeparator()
-    # D88 bank picker. Hidden entirely unless the mounted image holds more
-    # than one disk, exactly like the original.
-    bankPathItems[drv] = fd.addItem("")
-    bankPathItems[drv].enabled = false # a caption, not an action
+    # The title's disk list, closing the submenu. Hidden entirely unless the
+    # mount produced more than one disk, exactly like the original's bank
+    # list - including the separator above it, which would otherwise be left
+    # trailing at the end of the menu with nothing under it. Each slot is
+    # preceded by its own caption slot, which only shows for the first disk
+    # of a file when the disks came from several files - fixed slots cannot
+    # be inserted between one another later.
+    diskSepItems[drv] = fd.addSeparator()
+    setCaptionItems[drv] = fd.addItem("")
+    setCaptionItems[drv].enabled = false # a caption, not an action
     for i in 0 ..< DiskSlots:
-      bankItems[drv][i] = fd.addItem("", makeBankAction(drv, i))
-    bankSepItems[drv] = fd.addSeparator()
-    # Recent files. The original keeps a separate list per drive; this port
-    # keeps one shared list (its own recent.txt, which also remembers
-    # archives and playlists), and clicking an entry mounts it into
-    # whichever drive's menu it was picked from.
-    for i in 0 ..< RecentSlots:
-      recentItems[drv][i] = fd.addItem("", makeRecentAction(drv, i))
-    recentNoneItems[drv] = fd.addItem("None")
-    recentNoneItems[drv].enabled = false
+      groupCaptionItems[drv][i] = fd.addItem("")
+      groupCaptionItems[drv][i].enabled = false
+      diskItems[drv][i] = fd.addItem("", makeDiskAction(drv, i))
+
+  diskMenu.addSeparator()
+  # Both drives at once, the way a 2-disk game is normally started. Its own
+  # submenu rather than an item in FD0's, so that nothing under FD<n> ever
+  # acts on the other drive.
+  let bothMenu = diskMenu.addSubmenu("FD0 & FD1")
+  bothMenu.addItem("Insert…", insertBothAction(), key = "3")
+  bothMenu.addItem("Eject", proc () =
+    for drv in 0 ..< FloppyDrives:
+      ejectFloppy(drv))
+
+  diskMenu.addSeparator()
+  # One list for the app, not one per drive as the original has: an entry
+  # names a title (an archive or playlist as often as a bare image), which
+  # is not a per-drive thing. Its own recent.txt, since the core's
+  # config_t.recent_*_path fields are never populated by this tree.
+  let recentMenu = diskMenu.addSubmenu("Recent Files")
+  for i in 0 ..< RecentSlots:
+    recentItems[i] = recentMenu.addItem("", makeRecentAction(i))
+  recentNoneItem = recentMenu.addItem("None")
+  recentNoneItem.enabled = false
+  recentMenu.addSeparator()
+  recentMenu.addItem("Clear Recent Files", proc () =
+    recent = @[]
+    refreshRecentMenu())
 
   # --- CMT menu ---
   let cmtMenu = nativemenu.addMenu("CMT")
@@ -949,7 +1098,10 @@ proc main() =
         # alone in case the user is hot-swapping a disk mid-session).
         let raw = ev.drop.file
         if raw != nil:
-          loadMedia($raw, 0, reset = true)
+          # A drop is "start this title", so it fills both drives without
+          # asking which disk to use - the same choice Bubilator88 makes
+          # for its own drop handler.
+          loadMedia($raw, bothDrives = true, reset = true)
           sdlFreeStr(raw)
       else:
         discard

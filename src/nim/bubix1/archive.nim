@@ -21,7 +21,10 @@ type
     mkFloppy, mkTape, mkArchive, mkPlaylist, mkUnknown
 
 const
-  floppyExts = [".d88", ".d77", ".2d"]
+  # Kept in step with filedialog.DiskExtensions: an extension the Open panel
+  # lets through but classify() calls unknown would silently resolve to no
+  # media at all.
+  floppyExts = [".d88", ".d77", ".d8e", ".1dd", ".2d"]
   tapeExts = [".tap", ".cmt", ".t88", ".wav"]
   archiveExts = [".zip", ".7z"]
   playlistExts = [".m3u", ".m3u8"]
