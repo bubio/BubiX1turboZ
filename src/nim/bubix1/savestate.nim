@@ -12,7 +12,7 @@
 ## the section payloads. Sections are found by tag, so unknown ones are
 ## skipped and adding one later breaks nothing.
 
-import std/[json, options, os, streams, times]
+import std/[json, options, os, streams, times, unicode]
 import deflate
 
 const
@@ -84,6 +84,27 @@ type
 # Metadata as JSON
 # ----------------------------------------------------------------------
 
+proc escapeBytes(s: string): string =
+  ## Widens raw bytes to the code points U+0000-U+00FF so they survive a
+  ## trip through JSON.
+  ##
+  ## A D88 disk name is whatever bytes the image was written with -
+  ## Shift-JIS in practice - and Nim's json module passes such bytes
+  ## through untouched, which would leave the META section invalid UTF-8
+  ## and unreadable by anything but this app. Note this only widens: the
+  ## value stays the original byte sequence, still undecoded, because
+  ## nativemenu.m is the one place in this app that turns D88 names into
+  ## text (see diskset.nim).
+  for c in s:
+    result.add Rune(c.ord).toUTF8
+
+proc unescapeBytes(s: string): string =
+  ## Inverse of `escapeBytes`. A code point above U+00FF cannot have come
+  ## from it, so it is dropped rather than truncated into a stray byte.
+  for r in s.runes:
+    if r.int32 <= 0xff:
+      result.add chr(r.int32)
+
 proc toBytes(s: string): seq[byte] =
   result = newSeq[byte](s.len)
   for i, c in s:
@@ -124,7 +145,7 @@ proc toJson(m: StateMeta): JsonNode =
     result["drives"].add(
       if d.occupied:
         %*{"source": d.source, "image": d.image, "bank": d.bank,
-           "label": d.label, "image_size": d.imageSize,
+           "label": escapeBytes(d.label), "image_size": d.imageSize,
            "image_crc32": d.imageCrc32.int64,
            "write_protected": d.writeProtected}
       else:
@@ -181,7 +202,7 @@ proc fromJson(n: JsonNode): StateMeta =
       else:
         result.drives.add DriveState(
           occupied: true, source: d.str("source"), image: d.str("image"),
-          label: d.str("label"), bank: d.num("bank"),
+          label: unescapeBytes(d.str("label")), bank: d.num("bank"),
           imageSize: d.num("image_size"), imageCrc32: d.u32("image_crc32"),
           writeProtected: d.flag("write_protected"))
 
@@ -332,6 +353,8 @@ proc readThumbnail*(path: string): seq[byte] =
     s.close()
 
 proc describe*(info: StateInfo): string =
-  ## Menu caption for an occupied slot: the title and when it was taken.
-  let stamp = info.meta.savedAt.fromUnix().local().format("M/d H:mm")
-  if info.meta.title.len > 0: info.meta.title & " (" & stamp & ")" else: stamp
+  ## One-line caption for the quick save: when it was taken and what was in
+  ## the drives, in Bubilator88's `quickSaveInfo` shape.
+  result = info.meta.savedAt.fromUnix().local().format("MM/dd HH:mm")
+  if info.meta.title.len > 0:
+    result &= " — " & info.meta.title

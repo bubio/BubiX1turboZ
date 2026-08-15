@@ -26,7 +26,7 @@
 ## HDD are exposed here - feature reduction happens at this layer, not in
 ## the core.
 
-import std/[os, strformat, strutils, times]
+import std/[options, os, strformat, strutils, times]
 import uing
 import sdl2
 import sdl2/audio
@@ -44,6 +44,7 @@ import bubix1/hostconfig
 import bubix1/filedialog
 import bubix1/deflate
 import bubix1/savestate
+import bubix1/statepicker
 
 const
   ScreenWidth = 640
@@ -483,15 +484,18 @@ proc main() =
   romajiItemRef = romajiItem
   controlMenu.addSeparator()
 
-  # Numbered state slots, like the original's two submenus - no file
-  # dialog, just ten fixed files plus the quick save. The format is this
-  # app's own (.bx1s, see docs/dev/SaveState.md and savestate.nim), not the
-  # core's .sta: that one embeds _MAX_PATH-sized buffers, carries no
-  # metadata, and refers to a multi-disk image's banks by bare index.
-  # Nothing migrates - any leftover x1turboz.sta* is simply ignored.
-  var saveStateItems: array[StateSlots, MenuItemRef]
-  var loadStateItems: array[StateSlots, MenuItemRef]
+  # Save states. The format is this app's own (.bx1s, see
+  # docs/dev/SaveState.md and savestate.nim), not the core's .sta: that one
+  # embeds _MAX_PATH-sized buffers, carries no metadata, and refers to a
+  # multi-disk image's banks by bare index. Nothing migrates - any leftover
+  # x1turboz.sta* is simply ignored.
+  #
+  # The UI follows Bubilator88 (Views/SaveStateSheetView.swift): a quick
+  # save pair on ⌘S/⌘L with a caption showing what is in it, and two items
+  # that open a grid of thumbnails - a state is worth choosing by what it
+  # looks like, which a menu of ten numbered items cannot show.
   var quickLoadItem: MenuItemRef
+  var quickInfoItem: MenuItemRef
 
   proc scratch(name: string): string =
     paths.scratchDir() / name
@@ -593,23 +597,28 @@ proc main() =
         result.title = d.source.extractFilename().changeFileExt("")
         break
 
-  proc refreshStateMenus() =
-    ## Occupied slots name their title and when they were taken; empty ones
-    ## stay listed (the slot number is the point) but cannot be loaded.
-    for slot in 0 ..< StateSlots:
-      let path = paths.stateSlotPath(slot)
-      var caption = "State " & $slot
-      var occupied = false
-      if fileExists(path):
-        try:
-          caption &= " - " & savestate.describe(savestate.readInfo(path))
-          occupied = true
-        except CatchableError:
-          caption &= " - (unreadable)"
-      saveStateItems[slot].title = caption
-      loadStateItems[slot].title = caption
-      loadStateItems[slot].enabled = occupied
-    quickLoadItem.enabled = fileExists(paths.stateSlotPath(QuickSlot))
+  proc slotInfo(slot: int): Option[StateInfo] =
+    ## What a slot holds, or nothing when it is empty or unreadable. A file
+    ## this build cannot parse is treated as empty rather than reported:
+    ## the picker shows it as a slot free to write over, which is what it
+    ## effectively is.
+    let path = paths.stateSlotPath(slot)
+    if fileExists(path):
+      try:
+        return some(savestate.readInfo(path))
+      except CatchableError:
+        discard
+    none(StateInfo)
+
+  proc refreshQuickStateMenu() =
+    ## The quick save is the only state the menu itself describes; the
+    ## numbered slots are described by the picker, which reads them fresh
+    ## every time it opens.
+    let info = slotInfo(QuickSlot)
+    quickLoadItem.enabled = info.isSome
+    quickInfoItem.hidden = info.isNone
+    if info.isSome:
+      quickInfoItem.title = savestate.describe(info.get)
 
   proc saveStateTo(path: string) =
     createDir paths.scratchDir() # $TMPDIR can be reaped under a long session
@@ -623,7 +632,7 @@ proc main() =
       filedialog.message("Save State", e.msg)
     finally:
       removeFile(blob)
-    refreshStateMenus()
+    refreshQuickStateMenu()
 
   proc restoreDrives(m: StateMeta): string =
     ## Puts the disks the state was taken with back in the drives, through
@@ -783,22 +792,60 @@ proc main() =
     if warning.len > 0:
       filedialog.message("Load State", warning)
 
+  proc pickSlot(forSaving: bool): int =
+    ## Runs the slot grid. The emulation loop is stopped for as long as it
+    ## is up - which, unlike a file dialog, is however long it takes to
+    ## look at ten screenshots - so the audio the machine could not produce
+    ## meanwhile is dropped on the way out. Without that the loop comes
+    ## back chasing a sound clock that ran on without it.
+    var cells: seq[SlotCell]
+    for slot in 0 ..< StateSlots:
+      let info = slotInfo(slot)
+      var cell = SlotCell(
+        # Bubilator88 numbers its slots from 1 on screen. The files stay
+        # slot0..slot9 (paths.stateSlotPath), which nothing but this line
+        # and the picker's own indexing ever sees.
+        caption: "Slot " & $(slot + 1),
+        # Saving overwrites, so every slot is a target; loading needs one
+        # with something in it.
+        enabled: forSaving or info.isSome)
+      if info.isSome:
+        let meta = info.get.meta
+        cell.detail = meta.savedAt.fromUnix().local().format("MM/dd HH:mm")
+        cell.disks = meta.title
+        # The title comes from the file the user opened, so it is the
+        # better label; a disk's own name (raw D88 bytes, decoded on the
+        # AppKit side) only stands in when there is no file name to show.
+        if cell.disks.len == 0:
+          for d in meta.drives:
+            if d.occupied and d.label.len > 0:
+              cell.disks = d.label
+              break
+        cell.thumbnail = savestate.readThumbnail(paths.stateSlotPath(slot))
+      cells.add cell
+    result = statepicker.choose(
+      if forSaving: "Save State" else: "Load State", cells)
+    bx1MuteSound(h)
+    skipFrames = 0
+
   controlMenu.addItem("Quick Save", proc () =
     saveStateTo(paths.stateSlotPath(QuickSlot)), key = "s")
   quickLoadItem = controlMenu.addItem("Quick Load", proc () =
     loadStateFrom(paths.stateSlotPath(QuickSlot)), key = "l")
-  let saveStateMenu = controlMenu.addSubmenu("Save State")
-  let loadStateMenu = controlMenu.addSubmenu("Load State")
-  proc makeSaveStateAction(slot: int): MenuAction =
-    result = proc () = saveStateTo(paths.stateSlotPath(slot))
-  proc makeLoadStateAction(slot: int): MenuAction =
-    result = proc () = loadStateFrom(paths.stateSlotPath(slot))
-  for slot in 0 ..< StateSlots:
-    saveStateItems[slot] = saveStateMenu.addItem("State " & $slot,
-                                                 makeSaveStateAction(slot))
-    loadStateItems[slot] = loadStateMenu.addItem("State " & $slot,
-                                                 makeLoadStateAction(slot))
-  refreshStateMenus()
+  # A caption, not an action: what the quick save currently holds, shown
+  # the way the FD0/FD1 menus caption their disk lists.
+  quickInfoItem = controlMenu.addItem("")
+  quickInfoItem.enabled = false
+  controlMenu.addSeparator()
+  controlMenu.addItem("Save State…", proc () =
+    let slot = pickSlot(true)
+    if slot >= 0:
+      saveStateTo(paths.stateSlotPath(slot)))
+  controlMenu.addItem("Load State…", proc () =
+    let slot = pickSlot(false)
+    if slot >= 0:
+      loadStateFrom(paths.stateSlotPath(slot)))
+  refreshQuickStateMenu()
 
   # These three are plain toggles rather than radio groups, so they have to
   # flip their own state - AppKit does not do it for a target/action item.
