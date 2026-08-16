@@ -295,11 +295,18 @@ uint32_t bx1_core_state_id(void);
 
 /// Config values that make the original's EMU::load_state() throw the VM
 /// away and build a new one. Nothing here has a setter: this bridge cannot
-/// reconstruct the VM (EMU::vm is protected and the only rebuild path is
-/// inside EMU::load_state_tmp), so a host that drives process_state()
-/// directly has to compare these against a state's recorded values and
-/// refuse the load when they differ. Everything the UI *can* change has
-/// its own setter elsewhere in this header.
+/// reconstruct the VM on demand (EMU::vm is protected), so a host that
+/// drives process_state() directly has to compare these against a state's
+/// recorded values and refuse the load when they differ. Everything the UI
+/// *can* change has its own setter elsewhere in this header.
+///
+/// The core does have a second rebuild path besides EMU::load_state_tmp:
+/// EMU::reset() rebuilds the VM when cpu_type, option_switch, sound_type,
+/// printer_type or serial_type have moved since it was built
+/// (emu.cpp:281-311). Of those, only sound_type is settable here, and
+/// bx1_get_vm_sound_type() is the value to compare against for it - the
+/// four below cannot change while the machine runs, so their config value
+/// and their VM value are the same thing.
 int bx1_get_printer_type(bx1_handle h);
 int bx1_get_serial_type(bx1_handle h);
 int bx1_get_sound_frequency(bx1_handle h);
@@ -359,11 +366,36 @@ void bx1_set_monitor_type(bx1_handle h, int type);
 int bx1_get_monitor_type(bx1_handle h);
 /// type: USE_SOUND_TYPE values (0 = PSG only, 1 = +1 CZ-8BS1 FM board,
 /// 2 = +2 CZ-8BS1 FM boards).
+///
+/// The getter reads config, which is what the machine will be built with
+/// next - not what it is built with now. VM's constructor copies
+/// config.sound_type once (x1.cpp:76) and the device chain follows from
+/// that copy, so a change here reaches the machine only when the VM is
+/// rebuilt, which EMU::reset() does for exactly this set of settings
+/// (emu.cpp:292-311). Use bx1_get_vm_sound_type() for questions about the
+/// machine that is running.
 void bx1_set_sound_type(bx1_handle h, int type);
 int bx1_get_sound_type(bx1_handle h);
+/// The sound_type the *running* VM was constructed with, which is what any
+/// question about the current device chain has to be put to: how many FM
+/// boards can be heard, and whether a save state's chain matches this one.
+/// It follows config only across a bx1_reset().
+int bx1_get_vm_sound_type(bx1_handle h);
 /// device: USE_SOUND_VOLUME channel index. decibel_l/decibel_r: passed
-/// straight through to EMU::set_sound_device_volume.
+/// straight through to EMU::set_sound_device_volume, and stored in config
+/// so they survive to the next launch (the core does not do that itself -
+/// see the implementation).
 void bx1_set_volume(bx1_handle h, int device, int decibel_l, int decibel_r);
+/// The same, without touching config: what the machine plays at, when that
+/// is not what should be remembered. A host mixing its own master volume
+/// into the per-device levels stores the levels the user set with
+/// bx1_set_volume() and pushes the mixed result through here, so a restart
+/// does not find the attenuation baked into the stored levels and apply it
+/// a second time.
+///
+/// Note that a rebuild of the VM (see bx1_reset) re-applies the *config*
+/// values, so anything mixed in on top has to be pushed again afterwards.
+void bx1_apply_volume(bx1_handle h, int device, int decibel_l, int decibel_r);
 /// USE_SCANLINE: draws every other output line black instead of
 /// duplicating it, approximating a CRT's scanline gaps.
 void bx1_set_scan_line(bx1_handle h, int enabled);

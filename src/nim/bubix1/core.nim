@@ -157,8 +157,11 @@ proc bx1SetMonitorType*(h: Bx1Handle, kind: cint) {.importc: "bx1_set_monitor_ty
 proc bx1GetMonitorType*(h: Bx1Handle): cint {.importc: "bx1_get_monitor_type", bx1.}
 proc bx1SetSoundType*(h: Bx1Handle, kind: cint) {.importc: "bx1_set_sound_type", bx1.}
 proc bx1GetSoundType*(h: Bx1Handle): cint {.importc: "bx1_get_sound_type", bx1.}
+proc bx1GetVmSoundType*(h: Bx1Handle): cint {.importc: "bx1_get_vm_sound_type", bx1.}
 proc bx1SetVolume*(h: Bx1Handle, device, decibelL, decibelR: cint)
   {.importc: "bx1_set_volume", bx1.}
+proc bx1ApplyVolume*(h: Bx1Handle, device, decibelL, decibelR: cint)
+  {.importc: "bx1_apply_volume", bx1.}
 proc bx1SetScanLine*(h: Bx1Handle, enabled: cint) {.importc: "bx1_set_scan_line", bx1.}
 proc bx1GetScanLine*(h: Bx1Handle): cint {.importc: "bx1_get_scan_line", bx1.}
 proc bx1SetDriveType*(h: Bx1Handle, kind: cint) {.importc: "bx1_set_drive_type", bx1.}

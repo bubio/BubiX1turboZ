@@ -51,3 +51,17 @@ proc getBool*(cfg: HostConfig, key: string, fallback: bool): bool =
 
 proc setBool*(cfg: var HostConfig, key: string, value: bool) =
   cfg.values[key] = (if value: "1" else: "0")
+
+proc getInt*(cfg: HostConfig, key: string, fallback: int): int =
+  ## A missing key, or one whose value is not a number, reads as `fallback`
+  ## - the file is hand-editable, so a typo must not stop the app.
+  let raw = cfg.values.getOrDefault(key, "")
+  if raw.len == 0:
+    return fallback
+  try:
+    parseInt(raw)
+  except ValueError:
+    fallback
+
+proc setInt*(cfg: var HostConfig, key: string, value: int) =
+  cfg.values[key] = $value

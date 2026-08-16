@@ -74,6 +74,20 @@ const
   # original's Save/Load State submenus.
   StateSlots = 10
   QuickSlot = -1
+  # Volume panel geometry. libui-ng cannot size a window to its contents,
+  # so the height is built from what one device's group actually occupies
+  # on screen: the group title, its two slider rows, and the margins of the
+  # group and of the box it sits in.
+  VolumeWinWidth = 420
+  VolumeGroupHeight = 104
+  VolumeGroupGap = 12
+  VolumeWinMargin = 12
+  VolumeButtonHeight = 32
+  # The master group holds one row where a device group holds two.
+  VolumeMasterHeight = 68
+  # A standard macOS title bar, used only to line one window's content up
+  # with another's when all that can be set is a frame corner.
+  TitleBarHeight = 32
   # CONFIG_NAME in vm/x1/x1.h. Recorded in a save state so one taken on
   # another machine of this family cannot be loaded here by accident.
   Machine = "x1turboz"
@@ -93,6 +107,12 @@ proc sdlFreeStr(mem: cstring) {.importc: "SDL_free", cdecl.}
 # but not this one, so it is declared here; returns 0 on success.
 proc sdlGetDisplayUsableBounds(displayIndex: cint, bounds: var Rect): cint
   {.importc: "SDL_GetDisplayUsableBounds", cdecl.}
+
+# Which display a window is on, so the two bounds above can be asked about
+# that one rather than about display 0. Not wrapped by the Nim binding
+# either; returns a negative value on failure.
+proc sdlGetWindowDisplayIndex(window: WindowPtr): cint
+  {.importc: "SDL_GetWindowDisplayIndex", cdecl.}
 
 proc fail(msg: string) =
   stderr.writeLine "bubix1turboz: " & msg
@@ -117,14 +137,20 @@ proc main() =
   var recent = recentfiles.load(paths.recentFilesPath())
   var running = true
 
-  # The sound board the VM was actually built with. `config.sound_type` is
-  # writable at any time but VM's constructor is the only thing that reads
-  # it (x1.cpp:76), so once Device > Sound has been used the core's own
-  # getter reports a board this machine does not have. Anything that has to
-  # reason about the live device chain - the save state's reinit metadata
-  # and the guard that refuses a state built from another chain - must use
-  # this, not bx1GetSoundType.
-  let vmSoundType = bx1GetSoundType(h).int
+  proc vmSoundType(): int =
+    ## The sound board the running VM was built with.
+    ##
+    ## `config.sound_type` is writable at any time but VM's constructor is
+    ## the only thing that reads it (x1.cpp:76), so once Device > Sound has
+    ## been used `bx1GetSoundType` reports a board this machine may not
+    ## have. It stops being a lie at the next reset, which is where
+    ## EMU::reset() rebuilds the VM for exactly this set of settings
+    ## (emu.cpp:281-311) - and asking each time rather than caching once at
+    ## startup is what keeps this correct across that rebuild. Anything
+    ## reasoning about the live device chain (the save state's reinit
+    ## metadata, the guard that refuses a state built from another chain,
+    ## the Volume panel's greyed rows) must come here.
+    bx1GetVmSoundType(h).int
   # Same reasoning for the sample rate and latency, and for the same two
   # readers: EMU takes both in its constructor and never re-reads them, so
   # once Host > Sound has been used, config holds a value the running
@@ -140,6 +166,17 @@ proc main() =
   # is built before the SDL window exists but its actions drive both.
   var hostCfg = hostconfig.load(paths.hostConfigPath())
   var showStatusBar = hostCfg.getBool("ShowStatusBar", true)
+
+  # Assigned once the Volume panel exists, further down. A reset can rebuild
+  # the VM (see vmSoundType above), and the core hands the new one the
+  # per-device levels straight out of config - without the master volume
+  # this layer mixes into them. Everything that resets the machine goes
+  # through resetMachine() so that mix is put back.
+  var afterReset: proc () {.closure.} = nil
+  proc resetMachine() =
+    bx1Reset(h)
+    if afterReset != nil:
+      afterReset()
   # Full Speed is a host-loop concept, not a core setting: config.full_speed
   # has no reader anywhere in the vendored core (the original's winmain.cpp
   # is the only thing that reads it). It still round-trips through the core's
@@ -445,7 +482,7 @@ proc main() =
       # the extracted cache path or an individual disk inside it.
       rememberRecent(path)
       if reset:
-        bx1Reset(h)
+        resetMachine()
 
   proc loadTape(path: string) {.used.} =
     ## The CMT deck's equivalent of loadMedia: takes an archive, a playlist
@@ -554,7 +591,7 @@ proc main() =
   # is worse than no menu), and "Exit" (libui-ng puts Quit in the
   # application menu, where macOS expects it).
   let controlMenu = nativemenu.addMenu("Control")
-  controlMenu.addItem("Reset", proc () = bx1Reset(h), key = "r")
+  controlMenu.addItem("Reset", proc () = resetMachine(), key = "r")
   # The original labels special_reset() "NMI" for this machine; on the X1
   # turbo it is the front-panel NMI button, which is also how a NEW ON
   # reset is triggered.
@@ -672,7 +709,7 @@ proc main() =
       machine: Machine,
       iplCrc32: iplFingerprint(),
       reinit: ReinitConfig(
-        soundType: vmSoundType,
+        soundType: vmSoundType(),
         printerType: bx1GetPrinterType(h).int,
         serialType: bx1GetSerialType(h).int,
         soundFrequency: vmSoundFrequency,
@@ -830,17 +867,25 @@ proc main() =
         "machine in an inconsistent state.")
       return
     # Settings the original reacts to by throwing the VM away and building
-    # a new one. This layer replaces device state only and cannot rebuild
-    # the VM (EMU::vm is protected; the rebuild lives inside the core's own
-    # load_state), so a mismatch is refused rather than half-applied.
+    # a new one. This layer replaces device state only and cannot ask for
+    # that rebuild at load time (EMU::vm is protected, and the core does it
+    # only from its own load_state and from EMU::reset), so a mismatch is
+    # refused rather than half-applied.
     var mismatch = ""
+    # What the user can do about it, which is not the same for every row:
+    # the sound board is reachable through a reset, the rest are not.
+    var remedy = "which cannot be changed while the machine is running."
     # Sound type is in this list, not applied like the settings below it:
     # VM's constructor builds a different device chain for each value
     # (x1.cpp:116-125 adds the OPM boards), and VM::process_state checks
     # every device's typeid name against the stream (x1.cpp:1050-1063), so
     # a state from another chain would fail the apply and roll back. Say
     # why up front instead.
-    if m.reinit.soundType != vmSoundType: mismatch = "sound board"
+    if m.reinit.soundType != vmSoundType():
+      mismatch = "sound board"
+      remedy = "which this machine is not running. Pick it again in " &
+        "Device > Sound, reset the machine (Control > Reset), then load " &
+        "the state."
     elif m.reinit.printerType != bx1GetPrinterType(h).int: mismatch = "printer"
     elif m.reinit.serialType != bx1GetSerialType(h).int: mismatch = "serial"
     elif m.reinit.soundFrequency != vmSoundFrequency: mismatch = "sound frequency"
@@ -848,7 +893,7 @@ proc main() =
     if mismatch.len > 0:
       filedialog.message("Load State",
         "This save state was made with a different " & mismatch & " setting, " &
-        "which cannot be changed while the machine is running.")
+        remedy)
       return
 
     # Everything that can fail without touching the machine happens before
@@ -1151,23 +1196,23 @@ proc main() =
   let soundMenu = deviceMenu.addSubmenu("Sound")
   # The OPM boards are added by VM's constructor, which copies
   # config.sound_type into a member once (x1.cpp:76) and never rereads it,
-  # so a change here cannot reach the running machine: the original applies
-  # it by throwing the VM away and building a new one, which this layer
-  # cannot do (EMU::vm is protected - the same wall documented at loadState
-  # above). The setting is still worth offering, since it decides whether
-  # FM-scored titles play their music, so it is stored now and takes effect
-  # at the next launch: bx1SaveConfig on the way out writes it to
-  # config.ini (Control/SoundType, config.cpp:199 and 453). Comparing
-  # against what the VM was built with rather than against the previous
-  # choice means going back to the original board says nothing.
+  # so a change here cannot reach the machine that is running. It reaches
+  # the next one: the original applies such a change by throwing the VM
+  # away and building a new one, and EMU::reset() does exactly that when it
+  # finds config.sound_type has moved since the build (emu.cpp:281-311).
+  # So the wait is one reset, not one launch - Control > Reset is enough,
+  # and quitting works only because the setting is in config.ini by then
+  # (bx1SaveConfig writes Control/SoundType, config.cpp:199 and 453).
+  # Comparing against what the VM was built with rather than against the
+  # previous choice means going back to the original board says nothing.
   soundMenu.addRadioGroup(
-    @["PSG", "CZ-8BS1 x1", "CZ-8BS1 x2"], @[0, 1, 2], vmSoundType,
+    @["PSG", "CZ-8BS1 x1", "CZ-8BS1 x2"], @[0, 1, 2], vmSoundType(),
     proc (v: cint) =
       bx1SetSoundType(h, v)
-      if v.int != vmSoundType:
+      if v.int != vmSoundType():
         filedialog.message("Sound Board",
           "The sound board is chosen while the machine is being built, so " &
-          "this takes effect the next time BubiX1turboZ starts."))
+          "this takes effect at the next reset (Control > Reset)."))
   soundMenu.addSeparator()
   # The drive noise the machine mixes in alongside the synthesized
   # channels, played from WAVs this app generates at startup rather than
@@ -1207,36 +1252,232 @@ proc main() =
   # uiWindows is exactly the pattern that makes libui-ng's teardown
   # complain, and one live hidden window costs nothing.
   let volumeCount = bx1GetSoundVolumeCount().int
+  let printerType = bx1GetPrinterType(h).int
   # Device names come from the core's own sound_device_caption table
-  # ("PSG", "CZ-8BS1 #1", "CMT (Signal)", "Noise (FDD)", "Noise (CMT)"),
-  # so the labels cannot drift from the channels they control - and the
-  # tape ones are recognised by that same caption rather than by index,
-  # which the table is free to renumber.
-  var volumeDevices: seq[int] # core device indices, CMT ones filtered out
+  # ("PSG", "CZ-8BS1 #1", "CZ-8BS1 #2", "JAST SOUND", "CMT (Signal)",
+  # "Noise (FDD)", "Noise (CMT)"), so the labels cannot drift from the
+  # channels they control - and the tape ones are recognised by that same
+  # caption rather than by index, which the table is free to renumber.
+  #
+  # JAST SOUND (channel 3) is left out for a reason of the same kind: it is
+  # the printer port's 8-bit PCM, which VM::set_sound_device_volume only
+  # reaches at printer_type 3 (x1.cpp:676), and this port has no printer UI
+  # and no default that selects it - the channel can never exist here.
+  var volumeDevices: seq[int] # core device indices, absent ones filtered out
   for i in 0 ..< volumeCount:
-    if "CMT" notin $bx1GetSoundDeviceCaption(i.cint):
-      volumeDevices.add i
+    if "CMT" in $bx1GetSoundDeviceCaption(i.cint): continue
+    if i == 3 and printerType != 3: continue
+    volumeDevices.add i
+
+  proc volumeDeviceBuilt(device: int): bool =
+    ## Whether the running machine actually has the channel behind a slider.
+    ## VM::set_sound_device_volume is a hardcoded index switch
+    ## (x1.cpp:664-695), so asking by index here is exactly as stable as the
+    ## core: channel 1 is the first OPM board, channel 2 the second. The
+    ## question is put to `vmSoundType()`, the board count the VM was built
+    ## with, and not to the live config value - a board picked in Device >
+    ## Sound only arrives at the next reset, so until then the config says
+    ## one thing and the machine these sliders talk to says another.
+    case device
+    of 1: vmSoundType() >= 1
+    of 2: vmSoundType() >= 2
+    else: true
   # Sliders stay indexed by the core's device number, so the rows that are
   # skipped simply leave a nil entry nothing ever touches.
   var volumeL = newSeq[Slider](volumeCount)
   var volumeR = newSeq[Slider](volumeCount)
-  let volumeWin = newWindow("Volume", 360, 30 * volumeDevices.len + 40, false)
+  let volumeWin = newWindow("Volume", 1, 1, false)
   volumeWin.margined = true
-  let volumeGrid = newGrid(true)
-  proc makeVolumeChanged(dev: int): proc (sender: Slider) =
+  # Nothing here reads better wider, and dragging the panel smaller than the
+  # rows need puts them back on top of each other - libui-ng lets a group
+  # shrink past its own contents (see the stretchy note below).
+  volumeWin.resizeable = false
+  # One group per device rather than one flat grid of anonymous bars: the
+  # two sliders of a device are its left and right channel, which a caption
+  # sitting beside an unlabelled pair does not say.
+  # There is no numeric readout, matching the original's dialog (IDD_VOLUME
+  # is trackbars only): libui-ng sizes a grid column to the widest label in
+  # it, so a live "-40 dB" that shrinks to "0 dB" would resize the slider
+  # beside it on every drag. The slider carries the value as a tooltip
+  # instead, which libui-ng gives it by default.
+  let volumeBox = newVerticalBox(true)
+
+  # Master and Link L/R are this port's own, not the original's. The core
+  # has no master level - volume exists per device only - so the master is
+  # mixed in here: what the user set stays in the per-device sliders and in
+  # config.ini, and the machine is given the sum, clamped to the range the
+  # core accepts. Writing the sum to config instead would bake the
+  # attenuation into the stored levels and apply it again next launch.
+  var volumeMaster = max(-40, min(0, hostCfg.getInt("VolumeMaster", 0)))
+  var volumeLinked = hostCfg.getBool("VolumeLinkLR", false)
+  proc setLevel(slider: Slider, level: int) =
+    ## Sets a slider from code, and refreshes the tooltip that carries its
+    ## value. libui-ng only rewrites that text when the *user* moves the
+    ## knob (darwin/slider.m:57), so a knob moved from here would otherwise
+    ## sit under the previous number - and the tooltip is the only place
+    ## this panel shows a number at all. Re-asserting hasToolTip is what
+    ## rewrites it (slider.m:92-98).
+    slider.value = level
+    slider.hasToolTip = true
+  proc volumeMixed(level: int): int = max(-40, min(0, level + volumeMaster))
+  proc applyVolume(dev: int) =
+    ## Pushes one device's level to the machine, master included. Nothing
+    ## is stored: the caller decides whether this was a change worth
+    ## remembering (storeVolume) or only a re-application of one.
+    bx1ApplyVolume(h, dev.cint, volumeMixed(volumeL[dev].value).cint,
+      volumeMixed(volumeR[dev].value).cint)
+  proc storeVolume(dev: int) =
+    ## Remembers one device's levels as the user set them, then applies the
+    ## mixed result. bx1SetVolume also applies what it stores, so the order
+    ## matters: the machine must end up holding the mixed value.
+    bx1SetVolume(h, dev.cint, volumeL[dev].value.cint, volumeR[dev].value.cint)
+    applyVolume(dev)
+  proc applyAllVolumes() =
+    for i in volumeDevices:
+      if volumeDeviceBuilt(i):
+        applyVolume(i)
+  proc equalizeChannels() =
+    ## Brings every R channel onto its L. Run when the link is switched on
+    ## and once at startup if it was on when the app last quit - the levels
+    ## come back from config.ini as the two numbers they are, so without
+    ## this the panel could open showing rows the link says are equal and
+    ## they visibly are not.
+    for i in volumeDevices:
+      if volumeDeviceBuilt(i) and volumeR[i].value != volumeL[i].value:
+        volumeR[i].setLevel(volumeL[i].value)
+        storeVolume(i)
+  proc snap(slider: Slider): int =
+    ## The value a slider is worth, with its knob put back on it.
+    ##
+    ## The range is whole decibels but the control underneath is continuous,
+    ## so a knob dragged to -21.8 reports (and applies, and copies to the
+    ## other channel) -22 while sitting visibly short of it. Writing the
+    ## value back moves the knob onto the step it actually means, which is
+    ## also what makes two linked channels line up exactly. Setting a value
+    ## from code does not call the handler back (libui-ng only reports user
+    ## changes), so this cannot recurse.
+    result = slider.value
+    slider.setLevel(result)
+  proc makeVolumeChanged(dev: int, isLeft: bool): proc (sender: Slider) =
     result = proc (sender: Slider) =
-      bx1SetVolume(h, dev.cint, volumeL[dev].value.cint, volumeR[dev].value.cint)
-  for row, i in volumeDevices:
-    volumeGrid.add(newLabel($bx1GetSoundDeviceCaption(i.cint)), 0, row * 2, 1, 2,
-      false, AlignStart, false, AlignCenter)
+      let level = snap(sender)
+      if volumeLinked:
+        if isLeft:
+          volumeR[dev].setLevel(level)
+        else:
+          volumeL[dev].setLevel(level)
+      storeVolume(dev)
+  # Above the devices, since it acts on all of them.
+  let masterGroup = newGroup("Master", true)
+  let masterRows = newVerticalBox(true)
+  let masterRow = newHorizontalBox(true)
+  let masterSlider = newSlider(-40 .. 0, proc (sender: Slider) =
+    volumeMaster = snap(sender)
+    applyAllVolumes())
+  masterSlider.setLevel(volumeMaster)
+  masterRow.add(newLabel("L+R"))
+  masterRow.add(masterSlider, true)
+  masterRows.add(masterRow, true)
+  masterGroup.child = masterRows
+  volumeBox.add(masterGroup, true)
+
+  for i in volumeDevices:
+    let group = newGroup($bx1GetSoundDeviceCaption(i.cint), true)
+    # Boxes, not a Grid. A grid lays the two channels out just as well, but
+    # its darwin backend wraps every cell in a container view of its own,
+    # and the second row's containers ended up unreachable to the mouse -
+    # the R slider drew correctly and reported itself enabled while no
+    # click ever got to it. Boxes put the controls in the group directly.
+    let rows = newVerticalBox(true)
     # Range matches the core's own clamp on set_sound_device_volume.
-    volumeL[i] = newSlider(-40 .. 0, makeVolumeChanged(i))
-    volumeR[i] = newSlider(-40 .. 0, makeVolumeChanged(i))
-    volumeL[i].value = bx1GetVolumeL(h, i.cint).int
-    volumeR[i].value = bx1GetVolumeR(h, i.cint).int
-    volumeGrid.add(volumeL[i], 1, row * 2, 1, 1, true, AlignFill, false, AlignCenter)
-    volumeGrid.add(volumeR[i], 1, row * 2 + 1, 1, 1, true, AlignFill, false, AlignCenter)
-  volumeWin.child = volumeGrid
+    volumeL[i] = newSlider(-40 .. 0, makeVolumeChanged(i, true))
+    volumeR[i] = newSlider(-40 .. 0, makeVolumeChanged(i, false))
+    volumeL[i].setLevel(bx1GetVolumeL(h, i.cint).int)
+    volumeR[i].setLevel(bx1GetVolumeR(h, i.cint).int)
+    for parts in [("L", volumeL[i]), ("R", volumeR[i])]:
+      let (channel, slider) = parts
+      let row = newHorizontalBox(true)
+      row.add(newLabel(channel))
+      row.add(slider, true) # stretchy: the slider takes the spare width
+      # Stretchy here too, for the reason the groups are stretchy below.
+      rows.add(row, true)
+    group.child = rows
+    # Every group stretchy, so the window's height is shared out evenly.
+    # A non-stretchy group is held at a minimum that libui-ng computes too
+    # small for two slider rows, and the rows then overlap; only the ones
+    # given the leftover height escape that.
+    volumeBox.add(group, true)
+  let volumeBar = newHorizontalBox(true)
+  # One switch for the whole panel rather than one per device: the two
+  # channels of a device are almost always wanted at the same level, and a
+  # checkbox per group would add a row to every one of them. Ticking it
+  # brings every R up to its L there and then, rather than waiting for each
+  # to be dragged: a panel that says the channels are linked while showing
+  # rows where they visibly are not is the confusing half of both worlds.
+  let linkBox = newCheckbox("Link L/R", proc (sender: Checkbox) =
+    volumeLinked = sender.checked
+    if volumeLinked:
+      equalizeChannels())
+  linkBox.checked = volumeLinked
+  volumeBar.add(linkBox)
+  volumeBar.add(newLabel(""), true) # pushes the button to the trailing edge
+  # Same as the original's Reset button: back to 0dB, which is the config's
+  # own default, and the master with it. Applied straight away because this
+  # panel has no OK to apply it at - it edits the running machine live,
+  # where the original edited a copy and committed it on OK.
+  volumeBar.add(newButton("Reset", proc (sender: Button) =
+    volumeMaster = 0
+    masterSlider.setLevel(0)
+    for i in volumeDevices:
+      # Greyed rows are left alone. The original zeroes all seven channels,
+      # but nothing here has offered the user a way to change a channel its
+      # machine does not have, so this must not write one either - a
+      # disabled control that still edits the config is not disabled.
+      if volumeDeviceBuilt(i):
+        volumeL[i].setLevel(0)
+        volumeR[i].setLevel(0)
+        storeVolume(i)))
+  volumeBox.add(volumeBar)
+  volumeWin.child = volumeBox
+  proc refreshVolumeAvailability() =
+    ## Greys the rows whose board this machine does not have, and un-greys
+    ## them when a reset has since built one. Called on every show, not
+    ## once: Device > Sound plus Control > Reset changes the answer while
+    ## the panel is alive.
+    ##
+    ## The row stays rather than vanishing: the original lists every channel
+    ## of the table unconditionally, and a row that disappears looks like
+    ## the app lost the device. Greyed says what the original's own
+    ## (commented out) EnableWindow calls were reaching for - the channel
+    ## exists, this machine just has no board behind it.
+    ##
+    ## The sliders are disabled rather than the Group around them - a
+    ## disabled Group has no visible effect here - and only once the whole
+    ## tree is assembled, since libui-ng pushes an enable state down when a
+    ## control is given its parent.
+    for i in volumeDevices:
+      if volumeDeviceBuilt(i):
+        volumeL[i].enable()
+        volumeR[i].enable()
+      else:
+        volumeL[i].disable()
+        volumeR[i].disable()
+  refreshVolumeAvailability()
+  # The machine starts out holding config.ini's per-device levels; a master
+  # restored from the host settings has to be mixed into them once here, or
+  # it would not be heard until something moved a slider.
+  if volumeLinked:
+    equalizeChannels()
+  applyAllVolumes()
+  afterReset = applyAllVolumes
+  # Sized here rather than at newWindow, where the children the size has to
+  # fit did not exist yet. libui-ng has no "size to fit contents", so the
+  # per-device height is measured from what the platform actually lays out
+  # (group title, two slider rows, the box's own padding).
+  volumeWin.contentSize = (width: VolumeWinWidth,
+    height: VolumeMasterHeight + VolumeGroupHeight * volumeDevices.len +
+      VolumeGroupGap * (volumeDevices.len + 1) + VolumeButtonHeight +
+      VolumeWinMargin * 2)
   volumeWin.onClosing = proc (sender: Window): bool =
     # Hide rather than destroy, and return false so libui-ng does not
     # destroy it either - the same rule the main window follows, for the
@@ -1244,6 +1485,48 @@ proc main() =
     # "should close" delegate callback, which crashes).
     volumeWin.hide()
     false
+
+  var volumePlaced = false
+  proc showVolumeWindow() =
+    ## Shows the volume panel, centering it over the emulator window the
+    ## first time only - moving it back on every open would undo wherever
+    ## the user had put it.
+    refreshVolumeAvailability()
+    if not volumePlaced and sdlWin != nil:
+      volumePlaced = true
+      var wx, wy, ww, wh: cint
+      sdlWin.getPosition(wx, wy)
+      sdlWin.getSize(ww, wh)
+      let size = volumeWin.contentSize
+      # SDL measures from the top of the display; libui-ng's darwin backend
+      # measures from the top of the *visible* frame, i.e. below the menu
+      # bar (window.m:269-283), so the two differ by exactly that bar.
+      # Single display assumed for the horizontal axis, which is where the
+      # two do agree.
+      var menuBarHeight = 0
+      let display = sdlGetWindowDisplayIndex(sdlWin)
+      var full, usable: Rect
+      if display >= 0 and getDisplayBounds(display, full) == SdlSuccess and
+          sdlGetDisplayUsableBounds(display, usable) == 0:
+        menuBarHeight = usable.y.int - full.y.int
+      # Both sizes above describe content areas, while the position being
+      # set describes a frame corner, so centering one on the other has to
+      # step over one title bar. SDL2's Cocoa backend answers
+      # SDL_GetWindowBordersSize with "not supported", so the standard one
+      # is assumed; getting it wrong only slides the panel a few points.
+      let want = (x: wx.int + (ww.int - size.width) div 2,
+        y: wy.int + (wh.int - size.height) div 2 - TitleBarHeight - menuBarHeight)
+      volumeWin.position = want
+      volumeWin.show()
+      # The position above is set while the window has never been on screen,
+      # where the darwin backend has no NSScreen to measure against and can
+      # drop it. Reading back after show() is the only way to tell, and
+      # costs one redundant move in the case where it worked.
+      let got = volumeWin.position
+      if abs(got.x - want.x) > 2 or abs(got.y - want.y) > 2:
+        volumeWin.position = want
+    else:
+      volumeWin.show()
 
   # --- Host menu ---
   # Item order and wording follow the original (x1turboz.rc IDR_MENU1 >
@@ -1407,7 +1690,7 @@ proc main() =
     proc (v: cint) = bx1SetSoundStrictRendering(h, v))
   hostSoundMenu.addSeparator()
   # Where the original keeps it: ID_SOUND_VOLUME is inside POPUP "Sound".
-  hostSoundMenu.addItem("Volume", proc () = volumeWin.show())
+  hostSoundMenu.addItem("Volume", proc () = showVolumeWindow())
 
   hostMenu.addSeparator()
   let statusBarItem = hostMenu.addItem("Show Status Bar")
@@ -1784,6 +2067,10 @@ proc main() =
   bx1SaveConfig(h, paths.configFilePath().cstring)
   recentfiles.save(paths.recentFilesPath(), recent)
   hostCfg.setBool("ShowStatusBar", showStatusBar)
+  # The per-device levels live in the core's own config.ini; these two are
+  # this port's additions and have nowhere to go there.
+  hostCfg.setInt("VolumeMaster", volumeMaster)
+  hostCfg.setBool("VolumeLinkLR", volumeLinked)
   hostconfig.save(paths.hostConfigPath(), hostCfg)
 
   # Before the device closes: stopSoundRecording has to write the header's

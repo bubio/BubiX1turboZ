@@ -21,6 +21,14 @@ inline EMU* emu_of(bx1_handle h)
 {
 	return static_cast<EMU*>(h);
 }
+
+// The sound_type the running VM was constructed with. EMU keeps the same
+// value privately (emu.cpp:80) and rebuilds the VM whenever a reset finds
+// config.sound_type has moved away from it (emu.cpp:292-311), but it does
+// not expose it - so it is shadowed here, and every path below that can
+// rebuild the VM updates it. A file-static is enough: this bridge already
+// speaks to the core's own global `config`, and there is one machine.
+int vm_sound_type = 0;
 }
 
 bx1_handle bx1_create(const char* base_dir, const char* config_path)
@@ -54,6 +62,9 @@ bx1_handle bx1_create(const char* base_dir, const char* config_path)
 	}
 
 	EMU* emu = new EMU();
+	// EMU's constructor builds the VM from config, so this is the chain
+	// that exists from here on (until a reset rebuilds it).
+	vm_sound_type = config.sound_type;
 	// VM::update_dipswitch() (which is what actually latches
 	// config.monitor_type into the I/O port the boot ROM reads at
 	// 0x1ff0) only runs from VM::update_config(), never from the VM's
@@ -78,6 +89,10 @@ void bx1_save_config(bx1_handle h, const char* config_path)
 void bx1_reset(bx1_handle h)
 {
 	emu_of(h)->reset();
+	// EMU::reset() has just rebuilt the VM if config.sound_type moved since
+	// the last build, so the new chain is the one config describes either
+	// way. (bx1_special_reset below does not: it only resets the devices.)
+	vm_sound_type = config.sound_type;
 }
 
 void bx1_special_reset(bx1_handle h)
@@ -763,8 +778,31 @@ int bx1_get_sound_type(bx1_handle h)
 	return config.sound_type;
 }
 
+int bx1_get_vm_sound_type(bx1_handle h)
+{
+	(void)h;
+	return vm_sound_type;
+}
+
 void bx1_set_volume(bx1_handle h, int device, int decibel_l, int decibel_r)
 {
+	if(device < 0 || device >= USE_SOUND_VOLUME) {
+		return;
+	}
+	// EMU::set_sound_device_volume only forwards to the VM (emu.cpp:3016),
+	// so the config has to be written here or the setting would be lost at
+	// exit and the sliders would come back at 0 next launch. The original's
+	// volume dialog does the same thing, for the same reason.
+	config.sound_volume_l[device] = decibel_l;
+	config.sound_volume_r[device] = decibel_r;
+	emu_of(h)->set_sound_device_volume(device, decibel_l, decibel_r);
+}
+
+void bx1_apply_volume(bx1_handle h, int device, int decibel_l, int decibel_r)
+{
+	if(device < 0 || device >= USE_SOUND_VOLUME) {
+		return;
+	}
 	emu_of(h)->set_sound_device_volume(device, decibel_l, decibel_r);
 }
 

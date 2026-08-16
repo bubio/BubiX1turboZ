@@ -69,7 +69,9 @@ rm -rf "$OBJ"; mkdir -p "$OBJ"
 : > "$LOG"
 
 pass=0; fail=0; failed=()
-for s in "${SRCS[@]}"; do
+# ${SRCS[@]+...}: the bridge group leaves SRCS empty, which `set -u` treats
+# as unbound for an empty array.
+for s in ${SRCS[@]+"${SRCS[@]}"}; do
   o="$OBJ/${s//\//_}.o"
   if "$CXX" "${CXXFLAGS[@]}" "$SRC/$s" -o "$o" >>"$LOG" 2>&1; then
     printf 'ok   %s\n' "$s"
