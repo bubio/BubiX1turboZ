@@ -125,9 +125,73 @@ int bx1_get_aspect_height(bx1_handle h)
 	return emu_of(h)->get_vm_window_height_aspect();
 }
 
+void bx1_set_window_mode(bx1_handle h, int mode)
+{
+	(void)h;
+	config.window_mode = mode;
+}
+
+int bx1_get_window_mode(bx1_handle h)
+{
+	(void)h;
+	return config.window_mode;
+}
+
+void bx1_set_window_stretch_type(bx1_handle h, int type)
+{
+	(void)h;
+	config.window_stretch_type = type;
+}
+
+int bx1_get_window_stretch_type(bx1_handle h)
+{
+	(void)h;
+	return config.window_stretch_type;
+}
+
+void bx1_set_fullscreen_stretch_type(bx1_handle h, int type)
+{
+	(void)h;
+	config.fullscreen_stretch_type = type;
+}
+
+int bx1_get_fullscreen_stretch_type(bx1_handle h)
+{
+	(void)h;
+	return config.fullscreen_stretch_type;
+}
+
 int bx1_get_actual_sound_rate(bx1_handle h)
 {
 	return emu_of(h)->get_sound_rate();
+}
+
+double bx1_get_actual_sound_latency(bx1_handle h)
+{
+	(void)h;
+	// Same table as EMU's own sound_latency_table (emu.cpp), which is file
+	// static there and so cannot be shared. EMU read it once, in its
+	// constructor, to size the buffer create_sound() fills; the clamp below
+	// is the fallback that constructor used, so an out-of-range value maps
+	// to the same 100msec it did.
+	static const double latency_table[5] = {0.05, 0.1, 0.2, 0.3, 0.4};
+	int index = config.sound_latency;
+	if(index < 0 || index >= 5) {
+		index = 1;	// EMU's own fallback: 100msec
+	}
+	return latency_table[index];
+}
+
+void bx1_set_sound_strict_rendering(bx1_handle h, int enabled)
+{
+	(void)h;
+	config.sound_strict_rendering = (enabled != 0);
+}
+
+int bx1_get_sound_strict_rendering(bx1_handle h)
+{
+	(void)h;
+	return config.sound_strict_rendering ? 1 : 0;
 }
 
 int bx1_pull_audio(bx1_handle h, int16_t* dst, int frames)
@@ -532,6 +596,22 @@ int bx1_get_sound_latency(bx1_handle h)
 {
 	(void)h;
 	return config.sound_latency;
+}
+
+void bx1_set_sound_frequency(bx1_handle h, int index)
+{
+	(void)h;
+	if(0 <= index && index < 8) {
+		config.sound_frequency = index;
+	}
+}
+
+void bx1_set_sound_latency(bx1_handle h, int index)
+{
+	(void)h;
+	if(0 <= index && index < 5) {
+		config.sound_latency = index;
+	}
 }
 
 int bx1_vm_state_save(bx1_handle h, const char* path)

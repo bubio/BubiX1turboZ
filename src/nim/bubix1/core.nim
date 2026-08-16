@@ -27,8 +27,25 @@ proc bx1GetScreenWidth*(h: Bx1Handle): cint {.importc: "bx1_get_screen_width", b
 proc bx1GetScreenHeight*(h: Bx1Handle): cint {.importc: "bx1_get_screen_height", bx1.}
 proc bx1GetAspectHeight*(h: Bx1Handle): cint {.importc: "bx1_get_aspect_height", bx1.}
 
+proc bx1SetWindowMode*(h: Bx1Handle, mode: cint) {.importc: "bx1_set_window_mode", bx1.}
+proc bx1GetWindowMode*(h: Bx1Handle): cint {.importc: "bx1_get_window_mode", bx1.}
+proc bx1SetWindowStretchType*(h: Bx1Handle, kind: cint)
+  {.importc: "bx1_set_window_stretch_type", bx1.}
+proc bx1GetWindowStretchType*(h: Bx1Handle): cint
+  {.importc: "bx1_get_window_stretch_type", bx1.}
+proc bx1SetFullscreenStretchType*(h: Bx1Handle, kind: cint)
+  {.importc: "bx1_set_fullscreen_stretch_type", bx1.}
+proc bx1GetFullscreenStretchType*(h: Bx1Handle): cint
+  {.importc: "bx1_get_fullscreen_stretch_type", bx1.}
+
 proc bx1GetActualSoundRate*(h: Bx1Handle): cint
   {.importc: "bx1_get_actual_sound_rate", bx1.}
+proc bx1GetActualSoundLatency*(h: Bx1Handle): cdouble
+  {.importc: "bx1_get_actual_sound_latency", bx1.}
+proc bx1SetSoundStrictRendering*(h: Bx1Handle, enabled: cint)
+  {.importc: "bx1_set_sound_strict_rendering", bx1.}
+proc bx1GetSoundStrictRendering*(h: Bx1Handle): cint
+  {.importc: "bx1_get_sound_strict_rendering", bx1.}
 proc bx1PullAudio*(h: Bx1Handle, dst: ptr int16, frames: cint): cint
   {.importc: "bx1_pull_audio", bx1.}
 proc bx1GetBufferedAudioFrames*(h: Bx1Handle): cint
@@ -115,6 +132,10 @@ proc bx1GetSerialType*(h: Bx1Handle): cint {.importc: "bx1_get_serial_type", bx1
 proc bx1GetSoundFrequency*(h: Bx1Handle): cint
   {.importc: "bx1_get_sound_frequency", bx1.}
 proc bx1GetSoundLatency*(h: Bx1Handle): cint {.importc: "bx1_get_sound_latency", bx1.}
+proc bx1SetSoundFrequency*(h: Bx1Handle, index: cint)
+  {.importc: "bx1_set_sound_frequency", bx1.}
+proc bx1SetSoundLatency*(h: Bx1Handle, index: cint)
+  {.importc: "bx1_set_sound_latency", bx1.}
 
 proc bx1SetCpuPower*(h: Bx1Handle, power: cint) {.importc: "bx1_set_cpu_power", bx1.}
 proc bx1GetCpuPower*(h: Bx1Handle): cint {.importc: "bx1_get_cpu_power", bx1.}

@@ -57,8 +57,25 @@ proc stateSlotPath*(slot: int): string =
   ## Slots 0-9; slot -1 is the quick save ⌘S/⌘L writes.
   statesDir() / (if slot < 0: "quick.bx1s" else: "slot" & $slot & ".bx1s")
 
+proc recordingsDir*(): string =
+  ## Host > Rec Sound writes here. Not under Application Support: a
+  ## recording is something the user goes looking for later, so it belongs
+  ## in the platform's own audio folder (Linux: `XDG_MUSIC_DIR`, Windows:
+  ## `FOLDERID_Music`, when those platforms are targeted).
+  getHomeDir() / "Music" / appName
+
+proc screenshotsDir*(): string =
+  ## Host > Capture Screen writes here, for the same reason (Linux:
+  ## `XDG_PICTURES_DIR`, Windows: `FOLDERID_Pictures`).
+  getHomeDir() / "Pictures" / appName
+
 proc ensureDirsExist*() =
   ## Call once at startup, before bx1_create / load_config.
+  ##
+  ## `recordingsDir` and `screenshotsDir` are deliberately absent: they sit
+  ## in the user's own Music and Pictures folders, and someone who never
+  ## records or captures anything should not find empty folders there.
+  ## Both are created when something is first written to them.
   createDir(romsDir())
   createDir(statesDir())
   createDir(extractedDir())

@@ -73,6 +73,24 @@ int bx1_get_screen_height(bx1_handle h);
 /// Aspect-corrected display height (WINDOW_HEIGHT_ASPECT = 480 for X1turboZ).
 int bx1_get_aspect_height(bx1_handle h);
 
+/// The original's Host > Screen settings. The core does nothing with any of
+/// them (its win32 OSD is the only thing that ever read them), but it does
+/// load and save them in config.ini - so routing the host's window layout
+/// through here gives those settings the original's own persistence and
+/// section names for free ([Screen] WindowMode / WindowStretchType /
+/// FullScreenStretchType, config.cpp).
+///
+/// mode: 0-based window scale, i.e. the original's "Window x1" is 0.
+void bx1_set_window_mode(bx1_handle h, int mode);
+int bx1_get_window_mode(bx1_handle h);
+/// 0 = the machine's real pixels (640x400), 1 = aspect-corrected (640x480).
+void bx1_set_window_stretch_type(bx1_handle h, int type);
+int bx1_get_window_stretch_type(bx1_handle h);
+/// 0 = dot by dot, 1 = stretch keeping 640:400, 2 = stretch keeping 640:480,
+/// 3 = fill the display.
+void bx1_set_fullscreen_stretch_type(bx1_handle h, int type);
+int bx1_get_fullscreen_stretch_type(bx1_handle h);
+
 // ----------------------------------------------------------------------
 // Sound
 // ----------------------------------------------------------------------
@@ -90,6 +108,19 @@ int bx1_pull_audio(bx1_handle h, int16_t* dst, int frames);
 /// "frame sync is audio-clock driven").
 int bx1_get_buffered_audio_frames(bx1_handle h);
 void bx1_mute_sound(bx1_handle h);
+/// How much audio one bx1_run_frame burst may synthesize, in seconds: the
+/// core fills a whole sound_latency window per create_sound() call, so this
+/// is the value the host's pacing target must be derived from.
+///
+/// Reads config, which bx1_set_sound_latency can move without the running
+/// machine following (that only happens at the next launch), so this is
+/// only the machine's real figure until the UI offers that setter. Call it
+/// once at startup and keep the result; do not re-read it per frame.
+double bx1_get_actual_sound_latency(bx1_handle h);
+/// Realtime Mix (1) vs Light Weight Mix (0). Read by the VM's event
+/// scheduler on every mix, so a change takes effect immediately.
+void bx1_set_sound_strict_rendering(bx1_handle h, int enabled);
+int bx1_get_sound_strict_rendering(bx1_handle h);
 
 // ----------------------------------------------------------------------
 // Input
@@ -273,6 +304,21 @@ int bx1_get_printer_type(bx1_handle h);
 int bx1_get_serial_type(bx1_handle h);
 int bx1_get_sound_frequency(bx1_handle h);
 int bx1_get_sound_latency(bx1_handle h);
+
+/// ...with the one exception the original's own menu also offers: these two
+/// (Host > Sound) are settable, but like the original they only reach the
+/// machine at the next launch. EMU reads them in its constructor to size
+/// the sound buffer and never again - EMU::update_config() only forwards to
+/// the VM, and EMU::reset()'s reinitialize path reuses the rate it already
+/// has (emu.cpp:313). Writing them here stores them in config.ini exactly
+/// as the original does.
+///
+/// index: 0-7 for 2000/4000/8000/11025/22050/44100/62500/96000Hz. The 7th
+/// is 62500Hz rather than 48000Hz on this machine (OVERRIDE_SOUND_FREQ_48000HZ
+/// in vm/x1/x1.h); out-of-range values are ignored.
+void bx1_set_sound_frequency(bx1_handle h, int index);
+/// index: 0-4 for 50/100/200/300/400msec. Out-of-range values are ignored.
+void bx1_set_sound_latency(bx1_handle h, int index);
 
 // ----------------------------------------------------------------------
 // Speed control

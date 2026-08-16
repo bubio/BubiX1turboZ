@@ -46,6 +46,7 @@ import bubix1/deflate
 import bubix1/fddnoise
 import bubix1/savestate
 import bubix1/statepicker
+import bubix1/capture
 
 const
   ScreenWidth = 640
@@ -86,6 +87,13 @@ const
 # doc comment), so it is declared directly here.
 proc sdlFreeStr(mem: cstring) {.importc: "SDL_free", cdecl.}
 
+# The screen area minus whatever the desktop reserves (the menu bar and the
+# Dock on macOS). Used to decide how many "Window xN" scales the Host >
+# Screen menu can offer. The Nim sdl2 binding wraps SDL_GetDisplayBounds
+# but not this one, so it is declared here; returns 0 on success.
+proc sdlGetDisplayUsableBounds(displayIndex: cint, bounds: var Rect): cint
+  {.importc: "SDL_GetDisplayUsableBounds", cdecl.}
+
 proc fail(msg: string) =
   stderr.writeLine "bubix1turboz: " & msg
   quit 1
@@ -117,6 +125,14 @@ proc main() =
   # and the guard that refuses a state built from another chain - must use
   # this, not bx1GetSoundType.
   let vmSoundType = bx1GetSoundType(h).int
+  # Same reasoning for the sample rate and latency, and for the same two
+  # readers: EMU takes both in its constructor and never re-reads them, so
+  # once Host > Sound has been used, config holds a value the running
+  # machine is not using. A save state's metadata must describe the machine
+  # that produced it, and its load guard must compare against the machine
+  # that would receive it - neither may consult config.
+  let vmSoundFrequency = bx1GetSoundFrequency(h).int
+  let vmSoundLatency = bx1GetSoundLatency(h).int
 
   # Host-side view settings. These are not in the core's config_t on this
   # platform (config.show_status_bar is Win32-only there), so they persist
@@ -135,19 +151,93 @@ proc main() =
   var romajiItemRef = MenuItemRef(tag: 0)
   var sdlWin: WindowPtr = nil
   var renderer: RendererPtr = nil
+  # Opened further down, but declared here because Host > Rec Sound is built
+  # before that point and has to lock the device it records from.
+  var audioDev: AudioDeviceID = 0
+  # The rate the core actually synthesizes at, which is also the rate a
+  # recording is written at. Not config.sound_frequency: X1turboZ overrides
+  # that table's 48000Hz slot to 62500Hz.
+  let soundRate = bx1GetActualSoundRate(h).int
 
-  proc windowHeight(): cint =
-    (if showStatusBar: WindowHeight else: ScreenHeight).cint
+  # --- Screen layout (the original's Host > Screen) ---
+  # All three settings live in the core's config so they persist in
+  # config.ini under the original's own key names ([Screen] WindowMode,
+  # WindowStretchType, FullScreenStretchType), even though nothing inside
+  # this build of the core ever reads them - only its win32 OSD did.
+  #
+  # windowScale is 1-based ("Window x1") where config.window_mode is 0-based.
+  var windowScale = max(1, bx1GetWindowMode(h).int + 1)
+  # 0 = the machine's real 640x400 pixels, 1 = the 640x480 that reproduces
+  # the X1's non-square CRT pixels. 0 stays the default (phase 5 user
+  # decision: the stretched picture reads as distorted on a modern display);
+  # this only makes the original's other choice reachable.
+  var stretchType = clamp(bx1GetWindowStretchType(h).int, 0, 1)
+  var fullscreenStretch = clamp(bx1GetFullscreenStretchType(h).int, 0, 3)
+  var isFullscreen = false
+  # WINDOW_HEIGHT_ASPECT for this machine: 480.
+  let aspectHeight = bx1GetAspectHeight(h).int
+
+  proc guestHeight(): int =
+    ## The guest picture's height in window points at the current aspect.
+    if stretchType == 0: ScreenHeight else: aspectHeight
+
+  proc statusBarHeight(): cint =
+    (if showStatusBar: StatusBarHeight else: 0).cint
 
   proc applyWindowLayout() =
-    ## Resizes the window to fit (or drop) the status bar and re-establishes
-    ## the renderer's logical size, which is what makes the picture scale to
-    ## fill a fullscreen window instead of sitting in one corner.
+    ## Sizes the window to exactly fit the picture, at the current scale and
+    ## aspect, plus the status bar. No renderer logical size is set: each of
+    ## the fullscreen stretch modes needs its own destination rectangle, so
+    ## drawFrame works in real window points and computes that itself.
     if sdlWin == nil:
       return
-    sdlWin.setSize(ScreenWidth.cint, windowHeight())
-    if renderer != nil:
-      discard renderer.setLogicalSize(ScreenWidth.cint, windowHeight())
+    sdlWin.setSize((ScreenWidth * windowScale).cint,
+                   (guestHeight() * windowScale).cint + statusBarHeight())
+
+  proc maxWindowScale(): int =
+    ## How many "Window xN" items Host > Screen offers. The original builds
+    ## up to MAX_WINDOW=10 and lists only the scales that fit the desktop
+    ## (winmain.cpp:2044). Same rule, but measured against the taller 640:480
+    ## aspect so that switching aspect can never leave the window larger than
+    ## the display.
+    result = 1
+    var bounds: Rect
+    if sdlGetDisplayUsableBounds(0, bounds) != 0:
+      return
+    for n in 2 .. 10:
+      if (ScreenWidth * n).cint <= bounds.w and
+         (aspectHeight * n).cint + StatusBarHeight <= bounds.h:
+        result = n
+      else:
+        break
+
+  proc guestRect(areaW, areaH: cint): Rect =
+    ## Where the guest picture goes within the area above the status bar.
+    ##
+    ## Windowed, that area is already exactly the right size, so the picture
+    ## fills it. Fullscreen, it is one of the original's four stretch modes
+    ## (config.fullscreen_stretch_type, win32/osd_screen.cpp:230-268).
+    if not isFullscreen:
+      return rect(0, 0, areaW, areaH)
+    case fullscreenStretch
+    of 0:
+      # Dot by dot: the machine's real pixels, centred, never scaled - so
+      # 640x400 even when the window aspect above is set to 640:480.
+      let w = min(ScreenWidth.cint, areaW)
+      let h = min(ScreenHeight.cint, areaH)
+      rect((areaW - w) div 2, (areaH - h) div 2, w, h)
+    of 1, 2:
+      # As large as fits while keeping 640:400 (1) or 640:480 (2).
+      let ratioH = if fullscreenStretch == 1: ScreenHeight else: aspectHeight
+      var w = areaW
+      var h = cint(areaW.int * ratioH div ScreenWidth)
+      if h > areaH:
+        h = areaH
+        w = cint(areaH.int * ScreenWidth div ratioH)
+      rect((areaW - w) div 2, (areaH - h) div 2, w, h)
+    else:
+      # Fill: ignore the aspect ratio entirely.
+      rect(0, 0, areaW, areaH)
 
   # Handles for the parts of the FD0/FD1 menus that change while running.
   # They are filled in after win.show() (there is no menu bar before that),
@@ -585,8 +675,8 @@ proc main() =
         soundType: vmSoundType,
         printerType: bx1GetPrinterType(h).int,
         serialType: bx1GetSerialType(h).int,
-        soundFrequency: bx1GetSoundFrequency(h).int,
-        soundLatency: bx1GetSoundLatency(h).int),
+        soundFrequency: vmSoundFrequency,
+        soundLatency: vmSoundLatency),
       runtime: RuntimeConfig(
         monitorType: bx1GetMonitorType(h).int,
         driveType: bx1GetDriveType(h).int),
@@ -753,8 +843,8 @@ proc main() =
     if m.reinit.soundType != vmSoundType: mismatch = "sound board"
     elif m.reinit.printerType != bx1GetPrinterType(h).int: mismatch = "printer"
     elif m.reinit.serialType != bx1GetSerialType(h).int: mismatch = "serial"
-    elif m.reinit.soundFrequency != bx1GetSoundFrequency(h).int: mismatch = "sound frequency"
-    elif m.reinit.soundLatency != bx1GetSoundLatency(h).int: mismatch = "sound latency"
+    elif m.reinit.soundFrequency != vmSoundFrequency: mismatch = "sound frequency"
+    elif m.reinit.soundLatency != vmSoundLatency: mismatch = "sound latency"
     if mismatch.len > 0:
       filedialog.message("Load State",
         "This save state was made with a different " & mismatch & " setting, " &
@@ -1156,46 +1246,169 @@ proc main() =
     false
 
   # --- Host menu ---
-  # The original's Host menu is mostly Win32 renderer plumbing (Use
-  # Direct2D1 / Direct3D9 / DirectInput / Disable Windows 8 DWM) plus video
-  # and sound recording, whose OSD backends are stubs here (DevelopmentPlan
-  # 0.6 group B). What is left and genuinely works is kept, with the
-  # original's wording:
+  # Item order and wording follow the original (x1turboz.rc IDR_MENU1 >
+  # POPUP "Host"). The five of its entries that are not here, and why, are
+  # recorded in docs/dev/HostMenu.md:
   #
-  # * Screen: the original's window/fullscreen pair. Its stretch and rotate
-  #   variants need scaling modes this port does not implement.
-  # * Volume: the same per-device mixer the original's dialog exposes.
-  # * Show Status Bar.
+  # * Rec Movie 60/30/15fps - no video encoder, and none that is portable.
+  # * Filter (RGB Filter / None) - the original's filter only does anything
+  #   on a buffer that has already been scaled up by an integer factor
+  #   (win32/osd_screen.cpp:617), so at this port's default 1x it would be
+  #   an item that visibly does nothing. It is also not the same thing as
+  #   Device > Display > Scanline, which is the VM's own.
+  # * Screen > Rotate - no X1 title needs a rotated screen.
+  # * Input (Joystick #1/#2, Joystick To Keyboard) - all three are binding
+  #   dialogs, and joystick input is not wired up yet.
+  # * Use Direct2D1 / Direct3D9 / Use DirectInput / Disable Windows 8 DWM -
+  #   Win32 renderer and input backends with no counterpart here.
   #
-  # Not carried over from the original's Host > Sound submenu: the sample
-  # rate and latency choices. The audio device is opened once at the rate
-  # the core reports and there is no reopen path, so those items would set
-  # a value nothing re-reads.
+  # Wait Vsync is left out for a different reason than the rest of that
+  # group: SDL does have a vsync present (SDL_RENDERER_PRESENTVSYNC), but
+  # blocking on the display's 60Hz would fight the wall-clock 61.94Hz
+  # pacing the draw loop below runs on.
   let hostMenu = nativemenu.addMenu("Host")
+
+  # Rec Sound / Stop / Capture Screen. The original routes these through its
+  # OSD; this port's OSD has them as empty stubs and the core is not to be
+  # modified, so they are done from the host's own copies of the same data -
+  # see capture.nim.
+  var recSoundItem, recStopItem: MenuItemRef
+  recSoundItem = hostMenu.addItem("Rec Sound", proc () =
+    # The lock keeps the audio thread out of feedSound while the file is
+    # being created underneath it.
+    lockAudioDevice(audioDev)
+    let path = capture.startSoundRecording(soundRate)
+    unlockAudioDevice(audioDev)
+    if path.len == 0:
+      filedialog.message("Rec Sound",
+        "Could not start recording in " & paths.recordingsDir() & ".")
+    recSoundItem.enabled = not capture.isSoundRecording()
+    recStopItem.enabled = capture.isSoundRecording())
+  recStopItem = hostMenu.addItem("Stop", proc () =
+    lockAudioDevice(audioDev)
+    capture.stopSoundRecording(soundRate)
+    unlockAudioDevice(audioDev)
+    recSoundItem.enabled = true
+    recStopItem.enabled = false)
+  # The original greys out whatever is not applicable each time the menu
+  # opens; here the two items keep each other in step, and the status timer
+  # re-syncs them in case a write error stopped the recording on its own.
+  recStopItem.enabled = false
+  hostMenu.addItem("Capture Screen", proc () =
+    # The core's framebuffer, i.e. the guest's own picture: no status bar,
+    # no window scaling, whatever the window happens to look like.
+    if capture.saveScreenshot(bx1GetFramebuffer(h), ScreenWidth, ScreenHeight).len == 0:
+      filedialog.message("Capture Screen",
+        "Could not write a screenshot to " & paths.screenshotsDir() & "."))
+  hostMenu.addSeparator()
+
+  # --- Host > Screen ---
   let screenMenu = hostMenu.addSubmenu("Screen")
-  var screenItems: array[2, MenuItemRef]
-  var isFullscreen = false
+  var windowItems: seq[MenuItemRef]
+  var fullscreenItem: MenuItemRef
+
+  proc syncScreenItems() =
+    for i in 0 ..< windowItems.len:
+      windowItems[i].checked = (not isFullscreen) and (i + 1 == windowScale)
+    fullscreenItem.checked = isFullscreen
+
   proc applyFullscreen(on: bool) =
     if sdlWin != nil:
       discard sdlWin.setFullscreen(if on: SDL_WINDOW_FULLSCREEN_DESKTOP else: 0)
     isFullscreen = on
-    for j in 0 ..< 2:
-      screenItems[j].checked = (j == (if on: 1 else: 0))
-  screenItems[0] = screenMenu.addItem("Window x1", proc () = applyFullscreen(false))
-  # Carries the shortcut, and toggles rather than only entering fullscreen,
-  # so there is always a way back out: in fullscreen the menu bar is only
-  # reachable by knowing to push the pointer at the top of the screen, and
-  # a user who does not know that is stuck. Ctrl-Cmd-F is what macOS uses
-  # for Enter/Exit Full Screen everywhere else.
+    if not on:
+      # Leaving fullscreen restores whatever window scale is selected: SDL
+      # keeps the pre-fullscreen size, which may predate a scale change made
+      # while fullscreen.
+      applyWindowLayout()
+    syncScreenItems()
+
+  proc makeWindowScaleAction(scale: int): MenuAction =
+    ## Per-item rather than one shared closure, for the binding reason
+    ## documented at addRadioGroup above.
+    result = proc () =
+      windowScale = scale
+      bx1SetWindowMode(h, cint(scale - 1))
+      if isFullscreen:
+        applyFullscreen(false) # picking a window size means leaving fullscreen
+      else:
+        applyWindowLayout()
+        syncScreenItems()
+
+  for n in 1 .. maxWindowScale():
+    windowItems.add screenMenu.addItem("Window x" & $n, makeWindowScaleAction(n))
+  # The original lists one item per display mode it enumerated
+  # ("Fullscreen 640x400" and so on) because entering fullscreen there
+  # changes the display's resolution. On macOS that is not how fullscreen
+  # works, so this is a single desktop-fullscreen item.
   #
-  # Not the original's Alt+Enter: on this port Option is the X1's GRAPH key
-  # (keymap.nim), so that combination belongs to the guest.
-  screenItems[1] = screenMenu.addItem("Fullscreen 640x400",
+  # It toggles rather than only entering fullscreen, so there is always a
+  # way back out: in fullscreen the menu bar is only reachable by knowing to
+  # push the pointer at the top of the screen. Ctrl-Cmd-F is what macOS uses
+  # for Enter/Exit Full Screen everywhere else - not the original's
+  # Alt+Enter, since Option is the X1's GRAPH key here (keymap.nim).
+  fullscreenItem = screenMenu.addItem("Fullscreen",
     proc () = applyFullscreen(not isFullscreen),
     key = "f", mods = ModCommand or ModControl)
-  screenItems[0].checked = true
+  syncScreenItems()
 
-  hostMenu.addItem("Volume", proc () = volumeWin.show())
+  screenMenu.addSeparator()
+  # The original relabels these two at runtime from the machine's own
+  # dimensions ("Window: Aspect Ratio %d:%d", winmain.cpp:2076-2080); same
+  # here, from the values the bridge reports.
+  screenMenu.addRadioGroup(
+    @[&"Window: Aspect Ratio {ScreenWidth}:{ScreenHeight}",
+      &"Window: Aspect Ratio {ScreenWidth}:{aspectHeight}"],
+    @[0, 1], stretchType,
+    proc (v: cint) =
+      stretchType = v.int
+      bx1SetWindowStretchType(h, v)
+      applyWindowLayout())
+
+  screenMenu.addSeparator()
+  screenMenu.addRadioGroup(
+    @["Fullscreen: Dot By Dot",
+      &"Fullscreen: Stretch (Aspect Ratio {ScreenWidth}:{ScreenHeight})",
+      &"Fullscreen: Stretch (Aspect Ratio {ScreenWidth}:{aspectHeight})",
+      "Fullscreen: Stretch (Fill)"],
+    @[0, 1, 2, 3], fullscreenStretch,
+    proc (v: cint) =
+      fullscreenStretch = v.int
+      bx1SetFullscreenStretchType(h, v))
+
+  # --- Host > Sound ---
+  let hostSoundMenu = hostMenu.addSubmenu("Sound")
+  # Sample rate and latency are stored and take effect at the next launch.
+  # That is not a shortcoming of this port: EMU reads both in its
+  # constructor to size the buffer create_sound() fills and never again
+  # (EMU::update_config only forwards to the VM, and EMU::reset()'s
+  # reinitialize path reuses the rate it already has - emu.cpp:313), so the
+  # original's own menu behaves exactly the same way.
+  #
+  # The seventh entry is 62500Hz, not the table's 48000Hz: x1.h overrides
+  # that slot for this machine, and the original's own resource file says
+  # 62500Hz too.
+  hostSoundMenu.addRadioGroup(
+    @["2000Hz", "4000Hz", "8000Hz", "11025Hz",
+      "22050Hz", "44100Hz", "62500Hz", "96000Hz"],
+    @[0, 1, 2, 3, 4, 5, 6, 7], bx1GetSoundFrequency(h).int,
+    proc (v: cint) = bx1SetSoundFrequency(h, v))
+  hostSoundMenu.addSeparator()
+  hostSoundMenu.addRadioGroup(
+    @["50msec", "100msec", "200msec", "300msec", "400msec"],
+    @[0, 1, 2, 3, 4], bx1GetSoundLatency(h).int,
+    proc (v: cint) = bx1SetSoundLatency(h, v))
+  hostSoundMenu.addSeparator()
+  # This one is live: the VM's event scheduler reads it on every mix
+  # (vm/event.cpp:502).
+  hostSoundMenu.addRadioGroup(
+    @["Realtime Mix", "Light Weight Mix"], @[1, 0],
+    bx1GetSoundStrictRendering(h).int,
+    proc (v: cint) = bx1SetSoundStrictRendering(h, v))
+  hostSoundMenu.addSeparator()
+  # Where the original keeps it: ID_SOUND_VOLUME is inside POPUP "Sound".
+  hostSoundMenu.addItem("Volume", proc () = volumeWin.show())
+
   hostMenu.addSeparator()
   let statusBarItem = hostMenu.addItem("Show Status Bar")
   statusBarItem.checked = showStatusBar
@@ -1237,7 +1450,8 @@ proc main() =
   # renderer backing it yet - which is exactly the state the crash above
   # happens in.
   sdlWin = createWindow("BubiX1turboZ - Screen", SDL_WINDOWPOS_UNDEFINED,
-    SDL_WINDOWPOS_UNDEFINED, ScreenWidth.cint, windowHeight(), SDL_WINDOW_HIDDEN)
+    SDL_WINDOWPOS_UNDEFINED, (ScreenWidth * windowScale).cint,
+    (guestHeight() * windowScale).cint + statusBarHeight(), SDL_WINDOW_HIDDEN)
   if sdlWin == nil:
     fail "SDL_CreateWindow failed: " & $getError()
   renderer = createRenderer(sdlWin, -1, Renderer_Accelerated)
@@ -1261,15 +1475,14 @@ proc main() =
   # explicitly: without TextInput events the Romaji to Kana option would
   # leave the guest with no keyboard at all (see the TextInput handler).
   startTextInput()
-  # Everything is drawn in 640x(400[+24]) coordinates and SDL scales that
-  # to whatever the window actually is, so fullscreen fills the display
-  # instead of leaving the picture in a corner.
-  discard renderer.setLogicalSize(ScreenWidth.cint, windowHeight())
+  # Deliberately no SDL_RenderSetLogicalSize: drawing happens in real window
+  # points so that guestRect above can place the picture itself, which is
+  # what the four fullscreen stretch modes need.
 
   # Audio: must open at the core's *actual* rate, not a requested one
   # (X1turboZ overrides the "48000Hz" table slot to 62500Hz - see
-  # bx1_get_actual_sound_rate's doc comment).
-  let soundRate = bx1GetActualSoundRate(h)
+  # bx1_get_actual_sound_rate's doc comment); soundRate is read at the top
+  # of main, where the Host menu can reach it too.
   var desired: AudioSpec
   desired.freq = soundRate.cint
   desired.format = AUDIO_S16LSB
@@ -1285,15 +1498,25 @@ proc main() =
       # not whatever was left in the device buffer from a prior callback.
       let gotBytes = got * 4
       zeroMem(cast[pointer](cast[uint](stream) + gotBytes.uint), len.int - gotBytes)
+    # Host > Rec Sound writes the whole buffer, underrun silence included:
+    # the file is meant to be what came out of the speakers, not a
+    # gap-closed edit of it. A no-op unless a recording is running.
+    capture.feedSound(stream, framesWanted.int)
   desired.userdata = cast[pointer](h)
   var obtained: AudioSpec
-  let audioDev = openAudioDevice(nil, 0.cint, addr desired, addr obtained, 0)
+  audioDev = openAudioDevice(nil, 0.cint, addr desired, addr obtained, 0)
   if audioDev == 0:
     fail "SDL_OpenAudioDevice failed: " & $getError()
   echo &"audio device opened at {obtained.freq}Hz (requested {soundRate}Hz)"
   pauseAudioDevice(audioDev, 0)
 
-  let targetBufferedFrames = cint(soundRate.float * 0.1) # ~100ms latency
+  # How much audio the pacing loop keeps queued. Derived from the latency
+  # the core was *built* with, not from config.sound_latency as it stands
+  # now: create_sound() synthesizes one whole latency window per call, so a
+  # target that disagrees with it makes the loop overshoot by that ratio.
+  # A Host > Sound > latency change only reaches the core at the next
+  # launch, so it must not move this.
+  let targetBufferedFrames = cint(soundRate.float * bx1GetActualSoundLatency(h))
 
   # The status bar prints with the machine's own 8x8 ANK glyphs; see
   # ankfont.nim for why this rather than SDL_ttf. A missing font ROM leaves
@@ -1334,8 +1557,21 @@ proc main() =
           copyMem(cast[pointer](cast[uint](pixels) + uint(y * pitch.int)),
                   cast[pointer](cast[uint](fb) + uint(y * srcStride)), srcStride)
       texture.unlockTexture()
+
+    # The drawable's real size in points. Windowed it is what
+    # applyWindowLayout set; fullscreen it is the display's.
+    var outW = (ScreenWidth * windowScale).cint
+    var outH = (guestHeight() * windowScale).cint + statusBarHeight()
+    discard renderer.getRendererOutputSize(addr outW, addr outH)
+    let barH = statusBarHeight()
+    let areaH = max(0.cint, outH - barH)
+
+    # Black, not the last colour the status bar drew with: in the
+    # dot-by-dot and aspect-preserving fullscreen modes this is what fills
+    # the border around the picture.
+    renderer.setDrawColor(0, 0, 0, 255)
     renderer.clear()
-    var screenDst = rect(0.cint, 0.cint, ScreenWidth.cint, ScreenHeight.cint)
+    var screenDst = guestRect(outW, areaH)
     renderer.copy(texture, nil, addr screenDst)
 
     # Status bar: drawn directly into the emulator's own window, not as a
@@ -1356,14 +1592,12 @@ proc main() =
     # bar the user may not be looking at cannot hide it.
     if showStatusBar:
       renderer.setDrawColor(20, 20, 20, 255)
-      var barRect = rect(0.cint, ScreenHeight.cint, ScreenWidth.cint, StatusBarHeight.cint)
+      var barRect = rect(0.cint, areaH, outW, barH)
       discard renderer.fillRect(addr barRect)
 
       const
         lampW = 14.cint # the original's indicator bitmaps are 14x12
         lampH = 12.cint
-        lampY = (ScreenHeight + (StatusBarHeight - lampH.int) div 2).cint
-        textY = (ScreenHeight + (StatusBarHeight - ankfont.GlyphHeight) div 2).cint
         labelColor = (200'u8, 200'u8, 200'u8)
         # Three lamp states, matching the original's access_off /
         # access_on / access_green bitmaps. The third is selected by
@@ -1373,6 +1607,11 @@ proc main() =
         lampOff = (60'u8, 60'u8, 60'u8)
         lampOn = (230'u8, 60'u8, 50'u8)
         lampOn2 = (60'u8, 220'u8, 70'u8)
+
+      # The bar keeps its height in points whatever the window scale is -
+      # scaling 8x8 glyphs up with the picture would make the text huge.
+      let lampY = areaH + (barH - lampH) div 2
+      let textY = areaH + (barH - ankfont.GlyphHeight.cint) div 2
 
       var x = 6.cint
       x = font.draw(renderer, x, textY, "FD:", labelColor[0], labelColor[1], labelColor[2])
@@ -1388,7 +1627,7 @@ proc main() =
         x += lampW + 2
 
       let fpsText = $fpsDisplay & " fps"
-      font.draw(renderer, ScreenWidth.cint - font.width(fpsText) - 6, textY, fpsText,
+      font.draw(renderer, outW - font.width(fpsText) - 6, textY, fpsText,
         labelColor[0], labelColor[1], labelColor[2])
 
     renderer.present()
@@ -1526,6 +1765,12 @@ proc main() =
       # opened; this timer serves the same purpose.
       if romajiItemRef.tag != 0:
         romajiItemRef.checked = bx1GetRomajiToKana(h) != 0
+      # Rec Sound / Stop keep each other in step when clicked, but a
+      # recording can also end on its own (a write that fails, e.g. a full
+      # disk), so re-derive both from the recorder itself.
+      let recording = capture.isSoundRecording()
+      recSoundItem.enabled = not recording
+      recStopItem.enabled = recording
       lastStatusTicks = nowTicks
     if nowTicks - lastFpsTicks >= 1000:
       # Drawn frames per second, which is what the original's counter
@@ -1541,6 +1786,12 @@ proc main() =
   hostCfg.setBool("ShowStatusBar", showStatusBar)
   hostconfig.save(paths.hostConfigPath(), hostCfg)
 
+  # Before the device closes: stopSoundRecording has to write the header's
+  # length fields, and the audio thread must not be inside feedSound while
+  # it does.
+  lockAudioDevice(audioDev)
+  capture.stopSoundRecording(soundRate)
+  unlockAudioDevice(audioDev)
   closeAudioDevice(audioDev)
   font.destroy()
   texture.destroy()
