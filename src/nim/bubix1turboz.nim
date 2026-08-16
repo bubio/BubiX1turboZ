@@ -43,6 +43,7 @@ import bubix1/clipboard
 import bubix1/hostconfig
 import bubix1/filedialog
 import bubix1/deflate
+import bubix1/fddnoise
 import bubix1/savestate
 import bubix1/statepicker
 
@@ -97,11 +98,25 @@ proc main() =
   if not sdl2.init(INIT_VIDEO or INIT_AUDIO or INIT_EVENTS):
     fail "SDL_Init failed: " & $getError()
 
+  # Before bx1Create: the FDC loads the drive-noise WAVs as it is built, so
+  # anything generated after this point would not be heard until the next
+  # launch. See fddnoise.nim.
+  fddnoise.ensureFiles(paths.romsDir())
+
   let h = bx1Create(paths.romsDir().cstring, paths.configFilePath().cstring)
   if h == nil:
     fail "bx1_create failed (place BIOS ROMs in " & paths.romsDir() & ")"
   var recent = recentfiles.load(paths.recentFilesPath())
   var running = true
+
+  # The sound board the VM was actually built with. `config.sound_type` is
+  # writable at any time but VM's constructor is the only thing that reads
+  # it (x1.cpp:76), so once Device > Sound has been used the core's own
+  # getter reports a board this machine does not have. Anything that has to
+  # reason about the live device chain - the save state's reinit metadata
+  # and the guard that refuses a state built from another chain - must use
+  # this, not bx1GetSoundType.
+  let vmSoundType = bx1GetSoundType(h).int
 
   # Host-side view settings. These are not in the core's config_t on this
   # platform (config.show_status_bar is Win32-only there), so they persist
@@ -567,7 +582,7 @@ proc main() =
       machine: Machine,
       iplCrc32: iplFingerprint(),
       reinit: ReinitConfig(
-        soundType: bx1GetSoundType(h).int,
+        soundType: vmSoundType,
         printerType: bx1GetPrinterType(h).int,
         serialType: bx1GetSerialType(h).int,
         soundFrequency: bx1GetSoundFrequency(h).int,
@@ -735,7 +750,7 @@ proc main() =
     # every device's typeid name against the stream (x1.cpp:1050-1063), so
     # a state from another chain would fail the apply and roll back. Say
     # why up front instead.
-    if m.reinit.soundType != bx1GetSoundType(h).int: mismatch = "sound board"
+    if m.reinit.soundType != vmSoundType: mismatch = "sound board"
     elif m.reinit.printerType != bx1GetPrinterType(h).int: mismatch = "printer"
     elif m.reinit.serialType != bx1GetSerialType(h).int: mismatch = "serial"
     elif m.reinit.soundFrequency != bx1GetSoundFrequency(h).int: mismatch = "sound frequency"
@@ -1002,9 +1017,18 @@ proc main() =
   refreshFloppyMenus()
 
   # --- Device menu ---
-  # Nested exactly like the original's, with two of its submenus left out:
-  # Printer and Serial, whose OSD backends are no-op stubs in this port
-  # (DevelopmentPlan 0.6 group C), so every entry would be inert.
+  # Nested like the original's, with three of its submenus left out:
+  #
+  # * Printer and Serial, whose OSD backends are no-op stubs in this port
+  #   (DevelopmentPlan 0.6 group C), so every entry would be inert.
+  # * Boot Device. `config.drive_type` no longer configures any drive: the
+  #   branch that did is commented out in the vendored core itself
+  #   (x1.cpp:481-492), which leaves every drive initialized as 2D/300rpm
+  #   and lets the guest re-type them from the inserted medium through
+  #   ports 0xffe/0xfff (floppy.cpp:72-90). All the setting still does is
+  #   supply DIP switch bits at 0x1ff0, which no commercial title needs
+  #   changed. The value itself stays reachable - a save state restores it
+  #   (see loadState above) - only the menu that offered it is gone.
   #
   # A small helper covers the four radio groups below. Written as a proc
   # taking the values it needs rather than inline in each loop, for the
@@ -1014,10 +1038,11 @@ proc main() =
   proc addRadioGroup(menu: nativemenu.Menu, labels: seq[string], values: seq[int],
                      current: int, apply: proc (value: cint) {.closure.}) =
     ## Builds a set of items where clicking one checks it and clears the
-    ## rest. `values` are the core's own constants, which are not always a
-    ## dense 0..n range (boot device skips several). seq rather than
-    ## openArray: the per-item closures below capture them, which Nim does
-    ## not allow for an openArray.
+    ## rest. `values` are the core's own constants, kept explicit rather
+    ## than derived from the item index so a group whose constants are not
+    ## a dense 0..n range still works. seq rather than openArray: the
+    ## per-item closures below capture them, which Nim does not allow for
+    ## an openArray.
     var group = newSeq[MenuItemRef](labels.len)
     proc makeAction(idx: int): MenuAction =
       result = proc () =
@@ -1028,29 +1053,40 @@ proc main() =
       group[i] = menu.addItem(labels[i], makeAction(i))
       group[i].checked = (values[i] == current)
 
-  # Boot device. Reaches the guest as DIP switch bits of port 0x1ff0, so it
-  # takes effect on the next reset. The original also lists "HARD DISK"
-  # (value 7); omitted here, since this app has no way to mount one.
-  let bootMenu = deviceMenu.addSubmenu("Boot Device")
-  bootMenu.addRadioGroup(
-    @["5/3-inch 2D", "5/3-inch 2DD", "5/3-inch 2HD", "8-inch 1S"],
-    @[0, 1, 2, 6], bx1GetDriveType(h).int,
-    proc (v: cint) = bx1SetDriveType(h, v))
-
   let keyboardMenu = deviceMenu.addSubmenu("Keyboard")
   keyboardMenu.addRadioGroup(
     @["Keyboard Mode A", "Keyboard Mode B"], @[0, 1], bx1GetKeyboardType(h).int,
     proc (v: cint) = bx1SetKeyboardType(h, v))
 
   let soundMenu = deviceMenu.addSubmenu("Sound")
+  # The OPM boards are added by VM's constructor, which copies
+  # config.sound_type into a member once (x1.cpp:76) and never rereads it,
+  # so a change here cannot reach the running machine: the original applies
+  # it by throwing the VM away and building a new one, which this layer
+  # cannot do (EMU::vm is protected - the same wall documented at loadState
+  # above). The setting is still worth offering, since it decides whether
+  # FM-scored titles play their music, so it is stored now and takes effect
+  # at the next launch: bx1SaveConfig on the way out writes it to
+  # config.ini (Control/SoundType, config.cpp:199 and 453). Comparing
+  # against what the VM was built with rather than against the previous
+  # choice means going back to the original board says nothing.
   soundMenu.addRadioGroup(
-    @["PSG", "CZ-8BS1 x1", "CZ-8BS1 x2"], @[0, 1, 2], bx1GetSoundType(h).int,
-    proc (v: cint) = bx1SetSoundType(h, v))
+    @["PSG", "CZ-8BS1 x1", "CZ-8BS1 x2"], @[0, 1, 2], vmSoundType,
+    proc (v: cint) =
+      bx1SetSoundType(h, v)
+      if v.int != vmSoundType:
+        filedialog.message("Sound Board",
+          "The sound board is chosen while the machine is being built, so " &
+          "this takes effect the next time BubiX1turboZ starts."))
   soundMenu.addSeparator()
   # The drive noise the machine mixes in alongside the synthesized
-  # channels. The original's three CMT sources (noise, signal, voice) sit
-  # here too, but they are left out for the same reason as the CMT menu
-  # above: nothing in this app can put a tape in the deck to hear them.
+  # channels, played from WAVs this app generates at startup rather than
+  # ships (fddnoise.nim). Unlike the sound board above, this one is live:
+  # MB8877::update_config re-applies the mute to all three noise players
+  # (mb8877.cpp:1695-1706). The original's three CMT sources (noise,
+  # signal, voice) sit here too, but they are left out for the same reason
+  # as the CMT menu above: nothing in this app can put a tape in the deck
+  # to hear them.
   proc addToggle(menu: nativemenu.Menu, label: string, get: proc (): bool {.closure.},
                  set: proc (on: cint) {.closure.}) =
     ## A check item that flips its own state (AppKit does not) and pushes
