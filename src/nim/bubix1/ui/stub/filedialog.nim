@@ -10,6 +10,8 @@ proc openFile*(extensions: string): string =
 
 proc saveFile*(extensions, suggestedName: string): string = ""
 
+proc chooseFolder*(title, prompt: string): string = ""
+
 proc message*(title, body, okLabel: string) =
   stderr.writeLine(title & ": " & body)
 

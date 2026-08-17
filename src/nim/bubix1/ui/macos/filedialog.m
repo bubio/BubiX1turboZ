@@ -102,6 +102,36 @@ char *bx1_dialog_save_file(const char *extensions, const char *suggested_name)
 }
 
 /*
+	Folder chooser, for an action that writes several files at once and so
+	has no single name to put in a Save panel.
+
+	`prompt` is the default button's title, which is the only place a folder
+	chooser can say what it is about to do - there is no file name field to
+	label. Passed down from the message catalog like every other word here.
+*/
+char *bx1_dialog_choose_folder(const char *title, const char *prompt)
+{
+	@autoreleasepool {
+		NSOpenPanel *panel = [NSOpenPanel openPanel];
+		[panel setCanChooseFiles:NO];
+		[panel setCanChooseDirectories:YES];
+		[panel setAllowsMultipleSelection:NO];
+		[panel setCanCreateDirectories:YES];
+		[panel setResolvesAliases:YES];
+		if (title != NULL && title[0] != '\0') {
+			[panel setMessage:[NSString stringWithUTF8String:title]];
+		}
+		if (prompt != NULL && prompt[0] != '\0') {
+			[panel setPrompt:[NSString stringWithUTF8String:prompt]];
+		}
+		if ([panel runModal] != NSModalResponseOK) {
+			return NULL;
+		}
+		return copy_path([panel URL]);
+	}
+}
+
+/*
 	Disk chooser for an image that turned out to hold several disks.
 
 	Defined in nativemenu.m, which needs the same decoding for the same D88

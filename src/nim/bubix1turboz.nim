@@ -1157,6 +1157,27 @@ proc main() =
       ejectFloppy(drv))
 
   diskMenu.addSeparator()
+  # A disk mounted out of an archive lives under paths.extractedDir(), so
+  # whatever a game saves onto it is written into this app's own storage -
+  # a place the user has no reason to look in and every reason not to
+  # trust, since a cache entry goes away when its archive changes. This is
+  # the way out of it. Bubilator88 answers the same problem the same way
+  # (Export Cached Disks…); see archive.exportCache.
+  diskMenu.addItem(tr(msgExportExtractedDots), proc () =
+    let dest = filedialog.chooseFolder(tr(msgExportChooseFolder))
+    if dest.len == 0:
+      return
+    try:
+      let done = archive.exportCache(dest)
+      if done.archives == 0:
+        filedialog.message(tr(msgExportTitle), tr(msgExportNothing))
+      else:
+        filedialog.message(tr(msgExportTitle),
+          trf(msgExportDone, $done.files, $done.archives))
+    except CatchableError as e:
+      filedialog.message(tr(msgExportTitle), trf(msgExportFailed, e.msg)))
+
+  diskMenu.addSeparator()
   # One list for the app, not one per drive as the original has: an entry
   # names a title (an archive or playlist as often as a bare image), which
   # is not a per-drive thing. Its own recent.txt, since the core's

@@ -29,6 +29,12 @@ proc openFile*(extensions = ""): string =
 proc saveFile*(extensions = "", suggestedName = ""): string =
   backend.saveFile(extensions, suggestedName)
 
+proc chooseFolder*(title: string): string =
+  ## Asks for a destination folder. Empty string means the user
+  ## cancelled. The default button says what will happen to the folder,
+  ## since a folder chooser has no file name field to explain itself.
+  backend.chooseFolder(title, tr(msgButtonExport))
+
 proc message*(title, body: string) =
   backend.message(title, body, tr(msgButtonOk))
 

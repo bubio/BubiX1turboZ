@@ -49,11 +49,43 @@ proc cacheKey(path: string): string =
   h = h !& hash(info.lastWriteTime.toUnix())
   toHex(uint64(!$h), 12)
 
+const SourceMetaName = "source.txt"
+  ## Records which archive an extraction directory came from. A cache
+  ## directory is named after a hash, so without this the only thing
+  ## `exportCache` could call the exported folder is that hash - and a
+  ## user looking for a game's save data would have nothing to recognise.
+  ## `classify` calls it unknown, so `findMediaFiles` steps over it.
+
+proc writeSourceMeta(dest, path: string) =
+  ## One line, the archive's own path. Written next to the extracted
+  ## files rather than in an index of its own so that deleting a cache
+  ## directory takes its metadata with it.
+  ##
+  ## Best-effort: an extraction that cannot record where it came from is
+  ## still a usable extraction, and failing the mount over it would be a
+  ## poor trade.
+  try:
+    writeFile(dest / SourceMetaName, path & "\n")
+  except CatchableError:
+    discard
+
+proc readSourceMeta(dir: string): string =
+  ## The archive `dir` was extracted from, or "" for a directory that
+  ## predates `SourceMetaName` or whose archive was never recorded.
+  try:
+    readFile(dir / SourceMetaName).strip()
+  except CatchableError:
+    ""
+
 proc extractArchive*(path: string): string =
   ## Extracts `path` under `paths.extractedDir()`, reusing a previous
   ## extraction keyed by `cacheKey`. Returns the extraction directory.
   let dest = paths.extractedDir() / cacheKey(path)
   if dirExists(dest):
+    # Fills the file in for a directory extracted before this app wrote
+    # one, so an old cache becomes exportable by name on next use.
+    if not fileExists(dest / SourceMetaName):
+      writeSourceMeta(dest, path)
     return dest
   # Extract into a sibling temp directory and move it into place only on
   # success. Extracting straight into `dest` would leave a directory that
@@ -67,6 +99,7 @@ proc extractArchive*(path: string): string =
     removeDir(tmp)
     raise newException(IOError, "failed to extract " & path & ": " & output)
   moveDir(tmp, dest)
+  writeSourceMeta(dest, path)
   dest
 
 proc parsePlaylist*(path: string): seq[string] =
@@ -114,3 +147,87 @@ proc resolveMedia*(path: string): seq[string] =
 
 proc isAcceptedMedia*(path: string): bool =
   classify(path) != mkUnknown
+
+# --- Exporting the extraction cache ---------------------------------------
+#
+# A disk mounted out of an archive is a file under `paths.extractedDir()`,
+# and the guest writes its saves straight into it. That directory is named
+# after a hash, sits inside the application's own storage, and is deleted
+# without ceremony when a cache is invalidated - so a game's save data can
+# be there and be, for the user, unreachable and unsafe. Bubilator88 has
+# the same problem and answers it the same way (`exportCachedDisks` in its
+# DiskCacheManager). This is that answer.
+
+type
+  ExportResult* = object
+    ## What `exportCache` did. `archives` counts extraction directories,
+    ## `files` the images inside them.
+    archives*: int
+    files*: int
+
+proc uniqueDir(parent, name: string): string =
+  ## `parent/name`, or `parent/name-2`, `parent/name-3`, ... if taken. An
+  ## export never writes into a directory it did not create: two archives
+  ## can legitimately share a name, and merging their disks would produce
+  ## a folder that belongs to neither.
+  result = parent / name
+  var n = 2
+  while dirExists(result) or fileExists(result):
+    result = parent / (name & "-" & $n)
+    inc n
+
+proc copyMediaTree(src, dest: string): int =
+  ## Copies `src`'s media files into `dest`, keeping the layout the
+  ## archive had - a compilation that ships `Disk A/game.d88` is worth
+  ## exporting with that folder intact. Returns how many files were
+  ## written. The metadata file is not one of them.
+  for path in walkDirRec(src):
+    if path.extractFilename() == SourceMetaName:
+      continue
+    case classify(path)
+    of mkFloppy, mkTape, mkPlaylist:
+      let target = dest / path.relativePath(src)
+      createDir(target.parentDir())
+      copyFile(path, target)
+      inc result
+    of mkArchive, mkUnknown:
+      discard
+
+proc exportCache*(destination: string): ExportResult =
+  ## Copies every extracted archive under `paths.extractedDir()` into
+  ## `destination`, one folder per archive named after the archive itself
+  ## (falling back to the cache key when the archive was never recorded).
+  ##
+  ## Everything is copied rather than only what the guest has written to.
+  ## "Which of these did a game save into" is not a question this app can
+  ## answer honestly - a disk's timestamp moves when the core rewrites a
+  ## sector for any reason, including ones the user would not call a save
+  ## - and a filter that quietly left the wanted disk behind would be
+  ## worse than a copy that includes a few the user did not need.
+  ##
+  ## Raises `OSError`/`IOError` if a copy fails; whatever was written
+  ## before that stays where it is.
+  let cacheRoot = paths.extractedDir()
+  if not dirExists(cacheRoot):
+    return
+  var dirs: seq[string]
+  for kind, path in walkDir(cacheRoot):
+    # `.tmp-<pid>` directories are extractions in flight (see
+    # extractArchive); they are nobody's disks yet.
+    if kind == pcDir and not path.extractFilename().contains(".tmp-"):
+      dirs.add path
+  dirs.sort()
+  for dir in dirs:
+    let source = readSourceMeta(dir)
+    let name =
+      if source.len > 0: source.extractFilename().changeFileExt("")
+      else: dir.extractFilename()
+    let target = uniqueDir(destination, name)
+    let copied = copyMediaTree(dir, target)
+    if copied == 0:
+      # An extraction that held no media at all: leave no empty folder
+      # behind to explain.
+      removeDir(target)
+      continue
+    inc result.archives
+    result.files += copied

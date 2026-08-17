@@ -40,6 +40,8 @@ type
     msgMenuDisk, msgInsertDots, msgEject, msgInsertBlankDisk,
     msgWriteProtected, msgCorrectTiming, msgIgnoreCrcErrors,
     msgRecentFiles, msgRecentNone, msgClearRecentFiles,
+    msgExportExtractedDots, msgExportTitle, msgExportChooseFolder,
+    msgExportDone, msgExportNothing, msgExportFailed,
     # --- Device menu ---
     msgMenuDevice, msgKeyboard, msgKeyboardModeA, msgKeyboardModeB,
     msgSound, msgPlayFddNoise, msgDisplay, msgHighResolution, msgStandard,
@@ -56,7 +58,7 @@ type
     msgVolumeMaster, msgVolumeLinkLR,
     # --- Buttons shared by the native dialogs ---
     msgButtonOk, msgButtonCancel, msgButtonInsert, msgButtonOpenRomFolder,
-    msgButtonQuit,
+    msgButtonQuit, msgButtonExport,
     # --- The macOS application menu ---
     # macOS expects these six by name, and every platform draws its own
     # equivalent, so they are translated here like any other label rather
@@ -115,6 +117,16 @@ const
     msgRecentFiles: "Recent Files",
     msgRecentNone: "None",
     msgClearRecentFiles: "Clear Recent Files",
+    msgExportExtractedDots: "Export Extracted Disks…",
+    msgExportTitle: "Export Extracted Disks",
+    msgExportChooseFolder:
+      "Choose where to put the disks expanded from archives. Anything a " &
+      "game saved onto one of them is written into this app's own storage, " &
+      "which is not a safe place to leave it.",
+    msgExportDone: "Exported $1 disk(s) from $2 archive(s).",
+    msgExportNothing: "No archive has been expanded yet, so there is " &
+      "nothing to export.",
+    msgExportFailed: "Could not finish the export: $1",
 
     msgMenuDevice: "Device",
     msgKeyboard: "Keyboard",
@@ -160,6 +172,7 @@ const
     msgButtonInsert: "Insert",
     msgButtonOpenRomFolder: "Open ROM Folder",
     msgButtonQuit: "Quit",
+    msgButtonExport: "Export",
 
     msgAppMenuAbout: "About $1",
     msgAppMenuServices: "Services",
@@ -263,6 +276,15 @@ const
     msgRecentFiles: "最近使った項目",
     msgRecentNone: "なし",
     msgClearRecentFiles: "最近使った項目を消去",
+    msgExportExtractedDots: "展開したディスクを書き出す…",
+    msgExportTitle: "展開したディスクの書き出し",
+    msgExportChooseFolder:
+      "アーカイブから展開したディスクの書き出し先を選んでください。" &
+      "ゲームがそのディスクに保存した内容はこのアプリ専用の保存領域に" &
+      "書き込まれており、そのままにしておくのは安全ではありません。",
+    msgExportDone: "$2 個のアーカイブから $1 枚のディスクを書き出しました。",
+    msgExportNothing: "展開済みのアーカイブがないため、書き出すものがありません。",
+    msgExportFailed: "書き出しを完了できませんでした: $1",
 
     msgMenuDevice: "デバイス",
     msgKeyboard: "キーボード",
@@ -307,6 +329,7 @@ const
     msgButtonInsert: "挿入",
     msgButtonOpenRomFolder: "ROM フォルダを開く",
     msgButtonQuit: "終了",
+    msgButtonExport: "書き出す",
 
     msgAppMenuAbout: "$1 について",
     msgAppMenuServices: "サービス",

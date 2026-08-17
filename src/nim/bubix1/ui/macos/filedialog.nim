@@ -14,6 +14,8 @@ proc bx1DialogOpenFile(extensions: cstring): cstring
   {.importc: "bx1_dialog_open_file", cdecl.}
 proc bx1DialogSaveFile(extensions, suggestedName: cstring): cstring
   {.importc: "bx1_dialog_save_file", cdecl.}
+proc bx1DialogChooseFolder(title, prompt: cstring): cstring
+  {.importc: "bx1_dialog_choose_folder", cdecl.}
 proc bx1DialogFree(text: cstring) {.importc: "bx1_dialog_free", cdecl.}
 proc bx1DialogMessage(title, body, okLabel: cstring)
   {.importc: "bx1_dialog_message", cdecl.}
@@ -34,6 +36,9 @@ proc openFile*(extensions: string): string =
 
 proc saveFile*(extensions, suggestedName: string): string =
   takeString(bx1DialogSaveFile(extensions.cstring, suggestedName.cstring))
+
+proc chooseFolder*(title, prompt: string): string =
+  takeString(bx1DialogChooseFolder(title.cstring, prompt.cstring))
 
 proc message*(title, body, okLabel: string) =
   bx1DialogMessage(title.cstring, body.cstring, okLabel.cstring)
