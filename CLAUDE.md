@@ -11,6 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `scripts/build_nim_app.sh <出力先> <rpath>` — Nim アプリ本体のコンパイル。下の 2 つが共有する
 - `scripts/build_app_macos_dev.sh` — 開発用。`build/BubiX1turboZ` を作る（バンドル無し）
 - `scripts/build_macos.sh [--dmg] [--skip-core]` — リリース用。`build/BubiX1turboZ.app` と dmg を作る。CI が実行するのもこれ
+- `scripts/check_other_platforms.sh` — Linux / Windows 向けに `nim check` を走らせ、`src/nim/bubix1/ui/` の外にプラットフォーム依存コードが漏れていないか検査する。macOS のビルドでは検証されない分岐が腐るのを防ぐためのもの
 - `scripts/make_icon.sh` — `assets/BubiX1turboZ.png`（原画）から `assets/BubiX1turboZ.icns` を再生成。アイコンを変えるときだけ実行（ビルドからは呼ばれない）
 
 現時点の構成:
@@ -83,7 +84,7 @@ Sharp X1 turbo Z のマルチプラットフォーム対応エミュレーター
 
 M88M (`~/dev/_Emu/M88M/.github/workflows/`) の構成に倣う。確認済みの規約:
 
-- ワークフローは**プラットフォーム／アーキテクチャ単位でファイルを分ける** (`build-macos.yml`, `build-linux.yml`, `build-windows.yml`)。
+- ワークフローは**プラットフォーム／アーキテクチャ単位でファイルを分ける** (`build-macos.yml`, `build-linux.yml`, `build-windows.yml`)。この分割はあくまで**ビルド**ワークフローの話で、ビルドでないもの（`check-portability.yml` = 未ビルドプラットフォームの `nim check` と `src/nim/bubix1/ui/` の境界検査）は独立したファイルにする。
 - 各ワークフローは `push` / `pull_request` の両方に `paths:` フィルタを付け、**他プラットフォームの yml 変更やドキュメント変更では起動しないようにする**。フィルタにはソース、ビルドスクリプト、自身の yml、共通の publish 用 yml のみを列挙する。
 - `concurrency` で `${{ github.workflow }}-${{ github.ref }}` をグループ化し、`cancel-in-progress` は release イベント以外で有効にする。
 - リリース資産のアップロードは共通の再利用可能ワークフロー `publish-release-assets.yml` に `workflow_call` で委譲し、`asset-patterns` に拡張子グロブ（`*.dmg`, `*.deb`, `*.AppImage` など）を渡す。

@@ -1,0 +1,68 @@
+name: Check portability
+
+# The macOS build never compiles the Linux or Windows side of
+# src/nim/bubix1/ui - Nim skips the unselected branch of a `when` entirely
+# - so those backends can go stale without any build going red. This runs
+# scripts/check_other_platforms.sh, which type-checks both and verifies
+# that no platform is named outside that directory.
+#
+# A workflow of its own rather than a step in build-macos.yml: the
+# per-platform split this project follows (see CLAUDE.md) is about *build*
+# workflows, and a macOS build job that also vetted Linux and Windows
+# would sit outside that scheme. It also runs on ubuntu, so it costs the
+# macOS runner nothing and answers in well under a minute.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/nim/**'
+      - '*.nimble'
+      - 'mise.toml'
+      - 'scripts/check_other_platforms.sh'
+      - '.github/workflows/check-portability.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/nim/**'
+      - '*.nimble'
+      - 'mise.toml'
+      - 'scripts/check_other_platforms.sh'
+      - '.github/workflows/check-portability.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    # Same toolchain setup as build-macos.yml, and for the same reasons -
+    # see the comments there.
+    - name: Set up mise
+      uses: jdx/mise-action@v2
+      with:
+        install: false
+
+    - name: Install Nim toolchain
+      run: |
+        mise trust
+        mise plugins install nim https://github.com/asdf-community/asdf-nim
+        mise install
+
+    # `nim check` runs the semantic pass alone: no C compiler, no SDL, no
+    # linking. The sdl2 package still has to be present for its symbols to
+    # resolve, but nothing native is needed behind it.
+    - name: Install Nim dependencies
+      run: mise exec -- nimble install -d -y
+
+    - name: Check Linux and Windows sources
+      run: ./scripts/check_other_platforms.sh

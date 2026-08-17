@@ -48,17 +48,19 @@ import bubix1/recentfiles
 import bubix1/archive
 import bubix1/diskset
 import bubix1/ankfont
-import bubix1/nativemenu
-import bubix1/clipboard
 import bubix1/hostconfig
-import bubix1/filedialog
 import bubix1/deflate
 import bubix1/fddnoise
 import bubix1/savestate
-import bubix1/statepicker
-import bubix1/volumepanel
 import bubix1/capture
 import bubix1/i18n
+# Everything that talks to the host's windowing system. These are the only
+# imports here with a platform behind them; see bubix1/ui/README.md.
+import bubix1/ui/nativemenu
+import bubix1/ui/clipboard
+import bubix1/ui/filedialog
+import bubix1/ui/statepicker
+import bubix1/ui/volumepanel
 
 const
   ScreenWidth = 640

@@ -23,8 +23,7 @@
 ##   sound device captions in particular come from the emulation core.
 
 import std/strutils
-when not (defined(macosx) or defined(windows)):
-  import std/os # only the POSIX branch of systemLanguage reads the environment
+import ./ui/hostlang
 
 type
   Lang* = enum
@@ -385,21 +384,6 @@ const
 
   Catalog: array[Lang, array[MsgId, string]] = [EnglishCatalog, JapaneseCatalog]
 
-when defined(macosx):
-  {.compile: "hostlocale.m".}
-  {.passL: "-framework Foundation".}
-  proc bx1PreferredLanguage(): cstring
-    {.importc: "bx1_preferred_language", cdecl.}
-    ## The first of the user's preferred languages, as a BCP 47 tag
-    ## ("ja-JP"). Read from NSLocale rather than from the environment: a
-    ## bundle launched from the Finder inherits no LANG at all, so an
-    ## environment-based guess works from a terminal and fails on a
-    ## double-click.
-elif defined(windows):
-  proc getUserDefaultUILanguage(): uint16
-    {.importc: "GetUserDefaultUILanguage", stdcall, dynlib: "kernel32".}
-  const LangJapanese = 0x11'u16 ## LANG_JAPANESE, the low 10 bits of an LCID.
-
 var current = langEn
 
 proc fromTag(tag: string): Lang =
@@ -411,20 +395,8 @@ proc fromTag(tag: string): Lang =
 proc systemLanguage(): Lang =
   ## What the host says the user reads. Everything that is not a language
   ## this app has a catalog for reads as English.
-  when defined(macosx):
-    let tag = bx1PreferredLanguage()
-    if tag == nil: langEn else: fromTag($tag)
-  elif defined(windows):
-    if (getUserDefaultUILanguage() and 0x3ff'u16) == LangJapanese: langJa
-    else: langEn
-  else:
-    # POSIX: the first of these that is set and is not the C locale wins,
-    # which is the order gettext itself consults them in.
-    for name in ["LC_ALL", "LC_MESSAGES", "LANG"]:
-      let value = getEnv(name)
-      if value.len > 0 and value != "C" and value != "POSIX":
-        return fromTag(value)
-    langEn
+  let tag = hostlang.languageTag()
+  if tag.len == 0: langEn else: fromTag(tag)
 
 proc setLanguage*(preference: string) =
   ## Selects the catalog from a stored preference: "en" or "ja" to force
