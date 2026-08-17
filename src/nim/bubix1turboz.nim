@@ -163,6 +163,10 @@ var
     ## How much audio the pacing loop keeps queued. Same.
   runningFlag: Atomic[bool]
   fullSpeedFlag: Atomic[bool]
+  drawPending: Atomic[bool]
+    ## Set by the application's thread when it wants a fresh picture, and
+    ## acted on by the emulation thread at its next frame boundary. See
+    ## `emulationLoop` for why the rendering cannot happen anywhere else.
   emuThread: Thread[void]
 
 proc running(): bool = runningFlag.load(moRelaxed)
@@ -199,22 +203,37 @@ proc emulationLoop() {.thread.} =
       let batchEnd = getTicks() + FullSpeedBatchMs
       var guardCount = 0
       while getTicks() < batchEnd:
-        discard bx1RunFrame(emuHandle)
+        if bx1RunFrame(emuHandle) > 0 and drawPending.exchange(false, moRelaxed):
+          bx1DrawScreen(emuHandle)
         inc guardCount
         if guardCount > 2000:
           break
     else:
       var guardCount = 0
       while running() and bx1GetBufferedAudioFrames(emuHandle) < emuTargetFrames:
-        discard bx1RunFrame(emuHandle)
+        if bx1RunFrame(emuHandle) > 0 and drawPending.exchange(false, moRelaxed):
+          bx1DrawScreen(emuHandle)
         inc guardCount
         if guardCount > 1000:
           # Should be unreachable in normal operation; bail out rather than
           # spin forever if the VM ever stops producing audio progress.
           break
-      # The buffer is full: there is nothing to do until the device has
-      # drained some of it. A millisecond is far below the latency window
-      # (100ms) and keeps this thread off a core it does not need.
+
+    # Rendering happens on this thread, immediately after a frame the core
+    # says it advanced - which is the only moment the picture is whole.
+    # `DISPLAY::event_frame` wipes the machine's line buffers at the start
+    # of every frame and `draw_line` refills them as the raster descends
+    # (vm/x1/display.cpp), so a `bx1_draw_screen` that lands anywhere else
+    # returns a picture blank below wherever the raster had got to. The VM
+    # lock cannot help: it makes the two threads take turns, and taking a
+    # turn mid-frame is precisely the problem. So the application's thread
+    # asks for a picture (drawPending) and reads whichever one this thread
+    # last left in the core's buffer. It is also what the original app
+    # does - win32/winmain.cpp draws in the same iteration as emu->run().
+    if not fullSpeed():
+      # The audio buffer is full: there is nothing to do until the device
+      # has drained some of it. A millisecond is far below the latency
+      # window (100ms) and keeps this thread off a core it does not need.
       delay(1)
 
 proc fail(msg: string) =
@@ -794,6 +813,10 @@ proc main() =
     ## 320x200). Nearest-neighbour: the source is a 1:1 emulator frame, so
     ## dropping every other pixel is what a downscale of it looks like
     ## anyway, and it keeps this off the save path's critical timing.
+    # Held across the read for the same reason drawFrame holds it: the
+    # emulation thread may be rendering into this buffer right now.
+    bx1Lock(h)
+    defer: bx1Unlock(h)
     let fb = bx1GetFramebuffer(h)
     let w = bx1GetScreenWidth(h).int
     let ht = bx1GetScreenHeight(h).int
@@ -1571,7 +1594,11 @@ proc main() =
   hostMenu.addItem(tr(msgCaptureScreen), proc () =
     # The core's framebuffer, i.e. the guest's own picture: no status bar,
     # no window scaling, whatever the window happens to look like.
-    if capture.saveScreenshot(bx1GetFramebuffer(h), ScreenWidth, ScreenHeight).len == 0:
+    bx1Lock(h)
+    let written = capture.saveScreenshot(bx1GetFramebuffer(h), ScreenWidth,
+                                         ScreenHeight)
+    bx1Unlock(h)
+    if written.len == 0:
       filedialog.message(tr(msgCaptureScreen),
         trf(msgCaptureScreenFailed, paths.screenshotsDir())))
   hostMenu.addSeparator()
@@ -1840,6 +1867,9 @@ proc main() =
   # audio device already playing, since an unopened device would leave the
   # ring buffer full and the pacing loop with nothing to do.
   emuHandle = h
+  # So the first pass renders something rather than presenting the blank
+  # buffer the core allocated.
+  drawPending.store(true, moRelaxed)
   createThread(emuThread, emulationLoop)
 
   # The status bar prints with the machine's own 8x8 ANK glyphs; see
@@ -1864,13 +1894,11 @@ proc main() =
   proc drawFrame() =
     ## Renders one frame of the guest's screen plus the status bar.
     ##
-    ## `bx1_draw_screen` reads the VM's display device and leaves the
-    ## result in a buffer the core owns, so the lock has to span the copy
-    ## out of it as well - a per-call lock would let the emulation thread
-    ## start the next frame halfway through this one being read, and the
-    ## picture would tear across a scanline.
+    ## The picture itself is rendered by the emulation thread (see
+    ## `emulationLoop`); this copies whatever it last left in the core's
+    ## buffer, under the lock so that a render cannot be in progress
+    ## while the copy runs.
     bx1Lock(h)
-    bx1DrawScreen(h)
     var pixels: pointer
     var pitch: cint
     if texture.lockTexture(nil, addr pixels, addr pitch):
@@ -1884,6 +1912,10 @@ proc main() =
                   cast[pointer](cast[uint](fb) + uint(y * srcStride)), srcStride)
       texture.unlockTexture()
     bx1Unlock(h)
+    # Ask for the next one now rather than just before the next copy, so
+    # that the emulation thread has the whole frame interval to produce it
+    # and the picture is never a frame behind.
+    drawPending.store(true, moRelaxed)
 
     # The drawable's real size in points. Windowed it is what
     # applyWindowLayout set; fullscreen it is the display's.
