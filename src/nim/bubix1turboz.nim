@@ -1,8 +1,18 @@
 ## BubiX1turboZ application entry point.
 ##
-## Single window, single-threaded main loop (phase 5 milestone; moving
-## emulation to its own thread is a follow-up once this is verified stable
-## - see docs/dev/DevelopmentPlan.md phase 5).
+## Single window, two threads. The machine runs on `emulationLoop`; this
+## thread pumps events, drives the menus and presents finished frames. The
+## split is what lets a menu stay open or a modal dialog wait on the user -
+## both of which park this thread inside AppKit indefinitely - without the
+## guest stopping and the audio device running dry.
+##
+## They meet only inside the emulation core, and never at the same time:
+## every `bx1_*` call takes the core's recursive VM lock (the `vm_lock`
+## guard in src/bridge/bubix1_api.cpp), so no call site here has to
+## remember to lock. The two exceptions are the audio device's own thread,
+## which has a mutex of its own and must never wait for a frame, and this
+## file's `drawFrame`, which holds the lock explicitly across a pair of
+## calls rather than each of them.
 ##
 ## SDL2 owns the application object, the event pump and the emulation
 ## surface; everything the host platform draws around it - the menu bar,
@@ -19,9 +29,10 @@
 ## has run. The menu bar is installed afterwards, replacing SDL's own (see
 ## nativemenu.m for what that is worth).
 ##
-## Every way of quitting ends at `running = false`, which unwinds the loop
-## below and lets the saves at the bottom of `main` run. The Quit item sets
-## it directly; the Dock's Quit, the Apple Event a logout sends and SIGTERM
+## Every way of quitting ends at `setRunning(false)`, which unwinds the
+## loops on both threads and lets the saves at the bottom of `main` run
+## once the emulation thread has been joined. The Quit item calls it
+## directly; the Dock's Quit, the Apple Event a logout sends and SIGTERM
 ## all arrive as `QuitEvent` instead, because SDL subclasses
 ## `NSApplication` and overrides `-terminate:` to post `SDL_QUIT` rather
 ## than terminate (verified with `otool -oV`: `SDLApplication` overrides
@@ -38,7 +49,7 @@
 ## HDD are exposed here - feature reduction happens at this layer, not in
 ## the core.
 
-import std/[options, os, strformat, strutils, times]
+import std/[atomics, options, os, strformat, strutils, times]
 import sdl2
 import sdl2/audio
 import bubix1/core
@@ -129,6 +140,90 @@ const
 proc sdlSetTextureScaleMode(texture: TexturePtr, scaleMode: cint): cint
   {.importc: "SDL_SetTextureScaleMode", cdecl.}
 
+# --- State shared with the emulation thread ---------------------------------
+#
+# The VM runs on a thread of its own (see `emulationLoop`), so that a menu
+# being held open or a modal dialog waiting on the user - both of which
+# park the application's own thread inside AppKit for as long as they
+# like - no longer stop the machine and starve the audio device.
+#
+# What crosses between the two threads is only this: three flags and a
+# handle. Everything else the emulation thread touches lives behind
+# `bx1_*`, and every one of those calls takes the VM lock (see the vm_lock
+# guard in src/bridge/bubix1_api.cpp), so the two threads are never inside
+# the core at the same time.
+#
+# The flags are wrapped in accessors so that reading one still looks like
+# reading a variable at the fifty-odd places that do; only the definition
+# here knows they are atomic.
+var
+  emuHandle: Bx1Handle
+    ## Written once before the thread starts, read by it thereafter.
+  emuTargetFrames: cint
+    ## How much audio the pacing loop keeps queued. Same.
+  runningFlag: Atomic[bool]
+  fullSpeedFlag: Atomic[bool]
+  skipFramesCount: Atomic[int]
+  emuThread: Thread[void]
+
+proc running(): bool = runningFlag.load(moRelaxed)
+proc setRunning(value: bool) = runningFlag.store(value, moRelaxed)
+  ## Every way of quitting calls this; the loops on both threads unwind.
+
+proc fullSpeed(): bool = fullSpeedFlag.load(moRelaxed)
+proc setFullSpeed(value: bool) = fullSpeedFlag.store(value, moRelaxed)
+
+proc skipFrames(): int = skipFramesCount.load(moRelaxed)
+proc setSkipFrames(value: int) = skipFramesCount.store(value, moRelaxed)
+  ## Emulated frames since the last time Full Speed let one be drawn. Reset
+  ## by anything that wants the picture back immediately.
+
+
+const FullSpeedBatchMs = 8'u32
+  ## How long one Full Speed pass may run the VM before looking at the
+  ## flags again. Long enough that the per-pass overhead is negligible,
+  ## short enough that turning Full Speed off feels immediate.
+
+proc emulationLoop() {.thread.} =
+  ## Advances the machine, and nothing else. Drawing, the event pump and
+  ## every menu action stay on the application's own thread.
+  ##
+  ## Normally the pace is set by the audio ring buffer (DevelopmentPlan
+  ## architecture decision 4): keep running frames while the buffer the
+  ## SDL callback drains from is below the target latency, then wait. That
+  ## makes the audio device the clock, which is the only clock in the
+  ## system that runs at exactly the rate the guest's sound was sampled at.
+  ##
+  ## Nothing here allocates: this thread never touches a Nim string, seq or
+  ## ref, only the flags above and the C bridge.
+  while running():
+    if fullSpeed():
+      # Full Speed is not "run the VM faster" as such - it is the original
+      # app's frame-skip path, which stops advancing the frame-interval
+      # accumulator so nothing ever waits. Time-boxed per pass so that
+      # switching it off is noticed promptly.
+      let batchEnd = getTicks() + FullSpeedBatchMs
+      var guardCount = 0
+      while getTicks() < batchEnd:
+        discard bx1RunFrame(emuHandle)
+        setSkipFrames(skipFrames() + 1)
+        inc guardCount
+        if guardCount > 2000:
+          break
+    else:
+      var guardCount = 0
+      while running() and bx1GetBufferedAudioFrames(emuHandle) < emuTargetFrames:
+        discard bx1RunFrame(emuHandle)
+        inc guardCount
+        if guardCount > 1000:
+          # Should be unreachable in normal operation; bail out rather than
+          # spin forever if the VM ever stops producing audio progress.
+          break
+      # The buffer is full: there is nothing to do until the device has
+      # drained some of it. A millisecond is far below the latency window
+      # (100ms) and keeps this thread off a core it does not need.
+      delay(1)
+
 proc fail(msg: string) =
   stderr.writeLine "bubix1turboz: " & msg
   quit 1
@@ -194,7 +289,7 @@ proc main() =
   if h == nil:
     fail "bx1_create failed (place BIOS ROMs in " & paths.romsDir() & ")"
   var recent = recentfiles.load(paths.recentFilesPath())
-  var running = true
+  setRunning(true)
 
   proc vmSoundType(): int =
     ## The sound board the running VM was built with.
@@ -245,8 +340,7 @@ proc main() =
   # has no reader anywhere in the vendored core (the original's winmain.cpp
   # is the only thing that reads it). It still round-trips through the core's
   # config so it persists in config.ini like the original's does.
-  var fullSpeed = false
-  var skipFrames = 0
+  setFullSpeed(false)
   # Set once the Control menu exists, so the status timer can re-sync the
   # one setting the core clears behind our back (see below).
   var romajiItemRef = MenuItemRef(tag: 0)
@@ -605,7 +699,7 @@ proc main() =
     ModCommand or ModOption)
   appMenu.addStandardItem(tr(msgAppMenuShowAll), siShowAll)
   appMenu.addSeparator()
-  appMenu.addItem(trf(msgAppMenuQuit, AppName), proc () = running = false, "q")
+  appMenu.addItem(trf(msgAppMenuQuit, AppName), proc () = setRunning(false), "q")
 
   # --- Control menu (built natively; see nativemenu.nim) ---
   # Item order, wording and grouping follow the original eX1turboZ's own
@@ -744,7 +838,7 @@ proc main() =
         monitorType: bx1GetMonitorType(h).int,
         driveType: bx1GetDriveType(h).int),
       cpuPower: bx1GetCpuPower(h).int,
-      fullSpeed: fullSpeed)
+      fullSpeed: fullSpeed())
     for drv in 0 ..< FloppyDrives:
       result.runtime.correctDiskTiming.add bx1GetCorrectDiskTiming(h, drv.cint) != 0
       result.runtime.ignoreDiskCrc.add bx1GetIgnoreDiskCrc(h, drv.cint) != 0
@@ -962,10 +1056,10 @@ proc main() =
       return
     bx1SetCpuPower(h, m.cpuPower.cint)
     syncCpuItems()
-    fullSpeed = m.fullSpeed
-    fullSpeedItem.checked = fullSpeed
-    bx1SetFullSpeed(h, fullSpeed.cint)
-    skipFrames = 0
+    setFullSpeed(m.fullSpeed)
+    fullSpeedItem.checked = fullSpeed()
+    bx1SetFullSpeed(h, fullSpeed().cint)
+    setSkipFrames(0)
     if warning.len > 0:
       filedialog.message(tr(msgLoadStateTitle), warning)
 
@@ -1003,7 +1097,7 @@ proc main() =
     result = statepicker.choose(
       tr(if forSaving: msgSaveStateTitle else: msgLoadStateTitle), cells)
     bx1MuteSound(h)
-    skipFrames = 0
+    setSkipFrames(0)
 
   controlMenu.addItem(tr(msgQuickSave), proc () =
     saveStateTo(paths.stateSlotPath(QuickSlot)), key = "s")
@@ -1027,15 +1121,15 @@ proc main() =
   # These three are plain toggles rather than radio groups, so they have to
   # flip their own state - AppKit does not do it for a target/action item.
   # Assigned after creation because each closure refers to its own item.
-  fullSpeed = bx1GetFullSpeed(h) != 0
-  fullSpeedItem.checked = fullSpeed
+  setFullSpeed(bx1GetFullSpeed(h) != 0)
+  fullSpeedItem.checked = fullSpeed()
   driveVmItem.checked = bx1GetDriveVmInOpecode(h) != 0
   romajiItem.checked = bx1GetRomajiToKana(h) != 0
   nativemenu.setAction(fullSpeedItem, proc () =
     fullSpeedItem.checked = not fullSpeedItem.checked
-    fullSpeed = fullSpeedItem.checked
-    skipFrames = 0
-    bx1SetFullSpeed(h, fullSpeed.cint))
+    setFullSpeed(fullSpeedItem.checked)
+    setSkipFrames(0)
+    bx1SetFullSpeed(h, fullSpeed().cint))
   nativemenu.setAction(driveVmItem, proc () =
     driveVmItem.checked = not driveVmItem.checked
     bx1SetDriveVmInOpecode(h, driveVmItem.checked.cint))
@@ -1749,7 +1843,14 @@ proc main() =
   # target that disagrees with it makes the loop overshoot by that ratio.
   # A Host > Sound > latency change only reaches the core at the next
   # launch, so it must not move this.
-  let targetBufferedFrames = cint(soundRate.float * bx1GetActualSoundLatency(h))
+  emuTargetFrames = cint(soundRate.float * bx1GetActualSoundLatency(h))
+
+  # The machine gets a thread of its own from here on. Started only once
+  # everything it reads is in place - the handle, the pacing target, and an
+  # audio device already playing, since an unopened device would leave the
+  # ring buffer full and the pacing loop with nothing to do.
+  emuHandle = h
+  createThread(emuThread, emulationLoop)
 
   # The status bar prints with the machine's own 8x8 ANK glyphs; see
   # ankfont.nim for why this rather than SDL_ttf. A missing font ROM leaves
@@ -1759,16 +1860,11 @@ proc main() =
     stderr.writeLine "bubix1turboz: no 8x8 font ROM in " & paths.romsDir() &
       "; status bar text disabled"
 
-  var runFrameSafetyCounter = 0
   var fpsDisplay = 0
   var drawnFrames = 0
   var lastFpsTicks = getTicks()
   var lastStatusTicks = lastFpsTicks
   const StatusPollMs = 200'u32
-  # How long one Full Speed pass may run the VM before returning to the
-  # event pump. Long enough that the per-pass overhead is negligible, short
-  # enough that menus and keyboard stay responsive.
-  const FullSpeedBatchMs = 8'u32
   # X1turboZ runs at FRAMES_PER_SEC 61.94 (vm/x1/x1.h), which is not a whole
   # number of milliseconds - hence a float accumulator rather than an
   # integer interval, so the error does not compound into visible drift.
@@ -1777,6 +1873,13 @@ proc main() =
 
   proc drawFrame() =
     ## Renders one frame of the guest's screen plus the status bar.
+    ##
+    ## `bx1_draw_screen` reads the VM's display device and leaves the
+    ## result in a buffer the core owns, so the lock has to span the copy
+    ## out of it as well - a per-call lock would let the emulation thread
+    ## start the next frame halfway through this one being read, and the
+    ## picture would tear across a scanline.
+    bx1Lock(h)
     bx1DrawScreen(h)
     var pixels: pointer
     var pitch: cint
@@ -1790,6 +1893,7 @@ proc main() =
           copyMem(cast[pointer](cast[uint](pixels) + uint(y * pitch.int)),
                   cast[pointer](cast[uint](fb) + uint(y * srcStride)), srcStride)
       texture.unlockTexture()
+    bx1Unlock(h)
 
     # The drawable's real size in points. Windowed it is what
     # applyWindowLayout set; fullscreen it is the display's.
@@ -1867,11 +1971,11 @@ proc main() =
     inc drawnFrames
 
   var ev = sdl2.defaultEvent
-  while running:
+  while running():
     while pollEvent(ev):
       case ev.kind
       of QuitEvent:
-        running = false
+        setRunning(false)
       of KeyDown:
         let vk = keymap.toVk(ev.key.keysym.scancode)
         if vk != 0:
@@ -1899,7 +2003,7 @@ proc main() =
       of WindowEvent:
         case ev.window.event
         of WindowEvent_Close:
-          running = false
+          setRunning(false)
         of WindowEvent_FocusLost:
           # Without this, a key held down when focus moves away from the
           # SDL window would otherwise never see its key-up event and
@@ -1923,60 +2027,41 @@ proc main() =
       else:
         discard
 
-    # Advance the VM. Normally this is paced by the audio ring buffer
-    # (docs/dev/DevelopmentPlan.md architecture decision 4): keep running
-    # frames while the buffer the SDL callback drains from is below the
-    # target latency. Full Speed removes that limiter.
-    runFrameSafetyCounter = 0
-    if fullSpeed:
-      # The original's Full Speed is not "run the VM faster" as such: it
-      # forces winmain.cpp's frame-skip path, which stops advancing the
-      # frame-interval accumulator, so the loop never sleeps and never
-      # draws - except once per emulated second, so the window does not
-      # look frozen. Same shape here, time-boxed per pass so the event
-      # pump above still gets to run.
-      let batchEnd = getTicks() + FullSpeedBatchMs
-      while getTicks() < batchEnd:
-        discard bx1RunFrame(h)
-        inc skipFrames
-        inc runFrameSafetyCounter
-        if runFrameSafetyCounter > 2000:
-          break
-      if skipFrames > 62: # ~FRAMES_PER_SEC of emulated time
-        skipFrames = 0
-        drawFrame()
-        nextDrawTicks = getTicks().float + FrameIntervalMs
+    # Present. The machine itself is advanced on its own thread (see
+    # `emulationLoop`); all this loop decides is when a finished frame is
+    # worth putting on the screen.
+    #
+    # Drawing runs on a wall clock rather than "whenever the VM advanced".
+    # Neither of the obvious alternatives works: presenting every pass
+    # spins as fast as the GPU accepts frames (measured ~170/sec on a
+    # 61.94Hz machine, burning a core to show nothing new), and presenting
+    # once per emulated frame gives ~10/sec, because the emulation thread
+    # advances in bursts - the core synthesizes a whole sound_latency
+    # window (100ms, ~6 frames) per create_sound call, then nothing until
+    # the ring buffer drains. This is also how the original app works: its
+    # VM is paced by the DirectSound cursor while WM_PAINT redraws on a
+    # timer of its own.
+    #
+    # Full Speed draws about once per emulated second instead. The point of
+    # it is to give the machine every cycle the host has, and each present
+    # takes the VM lock away from the emulation thread for the length of a
+    # draw_screen - which at 62Hz is a toll worth paying only when what is
+    # on screen is what the user is watching.
+    let drawInterval =
+      if fullSpeed(): 1000.0
+      else: FrameIntervalMs
+    let frameTicks = getTicks()
+    if frameTicks.float < nextDrawTicks:
+      delay(1)
     else:
-      while bx1GetBufferedAudioFrames(h) < targetBufferedFrames:
-        discard bx1RunFrame(h)
-        inc runFrameSafetyCounter
-        if runFrameSafetyCounter > 1000:
-          # Should be unreachable in normal operation; bail out rather than
-          # freeze the UI if the VM ever stops producing audio progress.
-          break
-
-      # Drawing runs on its own clock rather than "once per pass through
-      # this loop". Neither of the obvious alternatives works: presenting
-      # every pass spins as fast as the GPU accepts frames (measured
-      # ~170/sec on a 61.94Hz machine, burning a core to show nothing new),
-      # and presenting only when the VM advanced gives ~10/sec, because the
-      # pacing loop above advances the VM in bursts - the core synthesizes
-      # a whole sound_latency window (100ms, ~6 frames) per create_sound
-      # call, then nothing until the ring buffer drains. Pacing here on
-      # wall time decouples the two, which is also how the original app
-      # works (its VM is paced by the DirectSound cursor while WM_PAINT
-      # redraws on its own timer).
-      let frameTicks = getTicks()
-      if frameTicks.float < nextDrawTicks:
-        delay(1)
-      else:
-        nextDrawTicks += FrameIntervalMs
-        if nextDrawTicks < frameTicks.float:
-          # Fell far enough behind (a stall, or the window was occluded)
-          # that catching up would mean a burst of back-to-back presents.
-          # Resync to now instead.
-          nextDrawTicks = frameTicks.float + FrameIntervalMs
-        drawFrame()
+      nextDrawTicks += drawInterval
+      if nextDrawTicks < frameTicks.float:
+        # Fell far enough behind (a stall, the window occluded, or Full
+        # Speed just switched off) that catching up would mean a burst of
+        # back-to-back presents. Resync to now instead.
+        nextDrawTicks = frameTicks.float + drawInterval
+      setSkipFrames(0)
+      drawFrame()
 
     # Status is sampled on a timer rather than every frame, the way the
     # original app polls its own status bar (winmain.cpp uses 200ms).
@@ -2010,6 +2095,10 @@ proc main() =
       lastFpsTicks = nowTicks
 
   stderr.writeLine "bubix1turboz: main loop exited, saving and shutting down"
+  # Before anything is written or freed: the emulation thread is still
+  # inside the core, and `running` is what tells it to leave. It checks
+  # that between frames, so this returns within a frame's worth of work.
+  joinThread(emuThread)
   bx1SaveConfig(h, paths.configFilePath().cstring)
   recentfiles.save(paths.recentFilesPath(), recent)
   hostCfg.setBool("ShowStatusBar", showStatusBar)

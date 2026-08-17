@@ -29,6 +29,27 @@ inline EMU* emu_of(bx1_handle h)
 // rebuild the VM updates it. A file-static is enough: this bridge already
 // speaks to the core's own global `config`, and there is one machine.
 int vm_sound_type = 0;
+
+// Serializes every call that reaches the emulation core, so that the
+// application's own thread (menus, dialogs, drawing) and the emulation
+// thread can both be inside this bridge without meeting inside the VM.
+//
+// The mutex behind lock_vm() is recursive, so the core taking it again on
+// its way down - EMU::run() does, around vm->run() - costs nothing.
+//
+// Deliberately not applied to bx1_pull_audio / bx1_get_buffered_audio_frames:
+// those run on the audio device's own thread, which has a mutex of its own
+// (OSD::sound_mutex) and must never wait on a frame being emulated. Nor to
+// bx1_create / bx1_destroy, which run before the emulation thread starts
+// and after it has been joined, when there is no VM to share.
+struct vm_lock
+{
+	EMU* emu;
+	explicit vm_lock(bx1_handle h) : emu(emu_of(h)) { emu->lock_vm(); }
+	~vm_lock() { emu->unlock_vm(); }
+	vm_lock(const vm_lock&) = delete;
+	vm_lock& operator=(const vm_lock&) = delete;
+};
 }
 
 bx1_handle bx1_create(const char* base_dir, const char* config_path)
@@ -83,11 +104,13 @@ void bx1_destroy(bx1_handle h)
 
 void bx1_save_config(bx1_handle h, const char* config_path)
 {
+	vm_lock guard(h);
 	save_config(config_path);
 }
 
 void bx1_reset(bx1_handle h)
 {
+	vm_lock guard(h);
 	emu_of(h)->reset();
 	// EMU::reset() has just rebuilt the VM if config.sound_type moved since
 	// the last build, so the new chain is the one config describes either
@@ -97,16 +120,19 @@ void bx1_reset(bx1_handle h)
 
 void bx1_special_reset(bx1_handle h)
 {
+	vm_lock guard(h);
 	emu_of(h)->special_reset();
 }
 
 int bx1_run_frame(bx1_handle h)
 {
+	vm_lock guard(h);
 	return emu_of(h)->run();
 }
 
 void bx1_draw_screen(bx1_handle h)
 {
+	vm_lock guard(h);
 	emu_of(h)->draw_screen();
 }
 
@@ -122,67 +148,79 @@ void bx1_unlock(bx1_handle h)
 
 const uint32_t* bx1_get_framebuffer(bx1_handle h)
 {
+	vm_lock guard(h);
 	return (const uint32_t*)emu_of(h)->get_screen_buffer(0);
 }
 
 int bx1_get_screen_width(bx1_handle h)
 {
+	vm_lock guard(h);
 	return emu_of(h)->get_vm_window_width();
 }
 
 int bx1_get_screen_height(bx1_handle h)
 {
+	vm_lock guard(h);
 	return emu_of(h)->get_vm_window_height();
 }
 
 int bx1_get_aspect_height(bx1_handle h)
 {
+	vm_lock guard(h);
 	return emu_of(h)->get_vm_window_height_aspect();
 }
 
 void bx1_set_window_mode(bx1_handle h, int mode)
 {
+	vm_lock guard(h);
 	(void)h;
 	config.window_mode = mode;
 }
 
 int bx1_get_window_mode(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.window_mode;
 }
 
 void bx1_set_window_stretch_type(bx1_handle h, int type)
 {
+	vm_lock guard(h);
 	(void)h;
 	config.window_stretch_type = type;
 }
 
 int bx1_get_window_stretch_type(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.window_stretch_type;
 }
 
 void bx1_set_fullscreen_stretch_type(bx1_handle h, int type)
 {
+	vm_lock guard(h);
 	(void)h;
 	config.fullscreen_stretch_type = type;
 }
 
 int bx1_get_fullscreen_stretch_type(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.fullscreen_stretch_type;
 }
 
 int bx1_get_actual_sound_rate(bx1_handle h)
 {
+	vm_lock guard(h);
 	return emu_of(h)->get_sound_rate();
 }
 
 double bx1_get_actual_sound_latency(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	// Same table as EMU's own sound_latency_table (emu.cpp), which is file
 	// static there and so cannot be shared. EMU read it once, in its
@@ -199,12 +237,14 @@ double bx1_get_actual_sound_latency(bx1_handle h)
 
 void bx1_set_sound_strict_rendering(bx1_handle h, int enabled)
 {
+	vm_lock guard(h);
 	(void)h;
 	config.sound_strict_rendering = (enabled != 0);
 }
 
 int bx1_get_sound_strict_rendering(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.sound_strict_rendering ? 1 : 0;
 }
@@ -221,26 +261,31 @@ int bx1_get_buffered_audio_frames(bx1_handle h)
 
 void bx1_mute_sound(bx1_handle h)
 {
+	vm_lock guard(h);
 	emu_of(h)->mute_sound();
 }
 
 void bx1_key_down(bx1_handle h, int vk_code, int repeat)
 {
+	vm_lock guard(h);
 	emu_of(h)->key_down(vk_code, false, repeat != 0);
 }
 
 void bx1_key_up(bx1_handle h, int vk_code)
 {
+	vm_lock guard(h);
 	emu_of(h)->key_up(vk_code, false);
 }
 
 void bx1_key_char(bx1_handle h, int code)
 {
+	vm_lock guard(h);
 	emu_of(h)->key_char((char)code);
 }
 
 void bx1_set_joy(bx1_handle h, int index, uint32_t status)
 {
+	vm_lock guard(h);
 	if(index < 0 || index >= 4) {
 		return;
 	}
@@ -249,6 +294,7 @@ void bx1_set_joy(bx1_handle h, int index, uint32_t status)
 
 void bx1_set_mouse(bx1_handle h, int dx, int dy, int buttons)
 {
+	vm_lock guard(h);
 	int32_t* mouse = emu_of(h)->get_osd()->get_mouse_buffer();
 	mouse[0] = dx;
 	mouse[1] = dy;
@@ -257,6 +303,7 @@ void bx1_set_mouse(bx1_handle h, int dx, int dy, int buttons)
 
 int bx1_open_floppy(bx1_handle h, int drv, const char* path, int bank)
 {
+	vm_lock guard(h);
 	EMU* emu = emu_of(h);
 	if(path == NULL || !FILEIO::IsFileExisting(path)) {
 		return 0;
@@ -275,11 +322,13 @@ int bx1_open_floppy(bx1_handle h, int drv, const char* path, int bank)
 
 void bx1_close_floppy(bx1_handle h, int drv)
 {
+	vm_lock guard(h);
 	emu_of(h)->close_floppy_disk(drv);
 }
 
 int bx1_get_floppy_bank_count(bx1_handle h, int drv)
 {
+	vm_lock guard(h);
 	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
 		return 0;
 	}
@@ -288,6 +337,7 @@ int bx1_get_floppy_bank_count(bx1_handle h, int drv)
 
 const char* bx1_get_floppy_bank_name(bx1_handle h, int drv, int bank)
 {
+	vm_lock guard(h);
 	if(drv < 0 || drv >= USE_FLOPPY_DISK || bank < 0 || bank >= MAX_D88_BANKS) {
 		return "";
 	}
@@ -296,6 +346,7 @@ const char* bx1_get_floppy_bank_name(bx1_handle h, int drv, int bank)
 
 const char* bx1_get_floppy_path(bx1_handle h, int drv)
 {
+	vm_lock guard(h);
 	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
 		return "";
 	}
@@ -304,6 +355,7 @@ const char* bx1_get_floppy_path(bx1_handle h, int drv)
 
 int bx1_get_floppy_bank(bx1_handle h, int drv)
 {
+	vm_lock guard(h);
 	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
 		return -1;
 	}
@@ -386,6 +438,7 @@ int bx1_scan_d88_banks(const char* path, int max_banks, bx1_d88_bank* out)
 
 int bx1_open_tape(bx1_handle h, const char* path, int play)
 {
+	vm_lock guard(h);
 	EMU* emu = emu_of(h);
 	if(play) {
 		emu->play_tape(0, path);
@@ -397,11 +450,13 @@ int bx1_open_tape(bx1_handle h, const char* path, int play)
 
 void bx1_close_tape(bx1_handle h)
 {
+	vm_lock guard(h);
 	emu_of(h)->close_tape(0);
 }
 
 int bx1_is_floppy_disk_accessed(bx1_handle h, int drv)
 {
+	vm_lock guard(h);
 	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
 		return 0;
 	}
@@ -414,12 +469,14 @@ int bx1_is_floppy_disk_accessed(bx1_handle h, int drv)
 
 int bx1_is_tape_active(bx1_handle h)
 {
+	vm_lock guard(h);
 	EMU* emu = emu_of(h);
 	return (emu->is_tape_playing(0) || emu->is_tape_recording(0)) ? 1 : 0;
 }
 
 int bx1_floppy_disk_indicator_color(bx1_handle h, int drv)
 {
+	vm_lock guard(h);
 	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
 		return 0;
 	}
@@ -428,22 +485,26 @@ int bx1_floppy_disk_indicator_color(bx1_handle h, int drv)
 
 int bx1_is_floppy_disk_inserted(bx1_handle h, int drv)
 {
+	vm_lock guard(h);
 	return emu_of(h)->is_floppy_disk_inserted(drv) ? 1 : 0;
 }
 
 int bx1_is_tape_inserted(bx1_handle h)
 {
+	vm_lock guard(h);
 	return emu_of(h)->is_tape_inserted(0) ? 1 : 0;
 }
 
 const char* bx1_get_tape_message(bx1_handle h)
 {
+	vm_lock guard(h);
 	const _TCHAR* msg = emu_of(h)->get_tape_message(0);
 	return msg != NULL ? msg : "";
 }
 
 void bx1_set_floppy_write_protected(bx1_handle h, int drv, int protect)
 {
+	vm_lock guard(h);
 	// EMU overloads this name on the argument list: one setter taking
 	// (drv, bool) and one getter taking (drv). Spelling out the bool keeps
 	// the intended overload unambiguous.
@@ -452,11 +513,13 @@ void bx1_set_floppy_write_protected(bx1_handle h, int drv, int protect)
 
 int bx1_get_floppy_write_protected(bx1_handle h, int drv)
 {
+	vm_lock guard(h);
 	return emu_of(h)->is_floppy_disk_protected(drv) ? 1 : 0;
 }
 
 void bx1_set_correct_disk_timing(bx1_handle h, int drv, int enabled)
 {
+	vm_lock guard(h);
 	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
 		return;
 	}
@@ -466,6 +529,7 @@ void bx1_set_correct_disk_timing(bx1_handle h, int drv, int enabled)
 
 int bx1_get_correct_disk_timing(bx1_handle h, int drv)
 {
+	vm_lock guard(h);
 	(void)h;
 	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
 		return 0;
@@ -475,6 +539,7 @@ int bx1_get_correct_disk_timing(bx1_handle h, int drv)
 
 void bx1_set_ignore_disk_crc(bx1_handle h, int drv, int enabled)
 {
+	vm_lock guard(h);
 	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
 		return;
 	}
@@ -484,6 +549,7 @@ void bx1_set_ignore_disk_crc(bx1_handle h, int drv, int enabled)
 
 int bx1_get_ignore_disk_crc(bx1_handle h, int drv)
 {
+	vm_lock guard(h);
 	(void)h;
 	if(drv < 0 || drv >= USE_FLOPPY_DISK) {
 		return 0;
@@ -493,6 +559,7 @@ int bx1_get_ignore_disk_crc(bx1_handle h, int drv)
 
 int bx1_create_blank_floppy_disk(bx1_handle h, const char* path, int media_type)
 {
+	vm_lock guard(h);
 	// The core takes the D88 header's own encoding (0x00/0x10/0x20) rather
 	// than a dense index; keep the bridge's argument dense so callers do
 	// not have to know the on-disk format.
@@ -505,42 +572,50 @@ int bx1_create_blank_floppy_disk(bx1_handle h, const char* path, int media_type)
 
 void bx1_tape_push_play(bx1_handle h)
 {
+	vm_lock guard(h);
 	emu_of(h)->push_play(0);
 }
 
 void bx1_tape_push_stop(bx1_handle h)
 {
+	vm_lock guard(h);
 	emu_of(h)->push_stop(0);
 }
 
 void bx1_tape_push_fast_forward(bx1_handle h)
 {
+	vm_lock guard(h);
 	emu_of(h)->push_fast_forward(0);
 }
 
 void bx1_tape_push_fast_rewind(bx1_handle h)
 {
+	vm_lock guard(h);
 	emu_of(h)->push_fast_rewind(0);
 }
 
 void bx1_tape_push_apss_forward(bx1_handle h)
 {
+	vm_lock guard(h);
 	emu_of(h)->push_apss_forward(0);
 }
 
 void bx1_tape_push_apss_rewind(bx1_handle h)
 {
+	vm_lock guard(h);
 	emu_of(h)->push_apss_rewind(0);
 }
 
 void bx1_set_wave_shaper(bx1_handle h, int enabled)
 {
+	vm_lock guard(h);
 	config.wave_shaper[0] = (enabled != 0);
 	emu_of(h)->update_config();
 }
 
 int bx1_get_wave_shaper(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.wave_shaper[0] ? 1 : 0;
 }
@@ -591,30 +666,35 @@ uint32_t bx1_core_state_id(void)
 
 int bx1_get_printer_type(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.printer_type;
 }
 
 int bx1_get_serial_type(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.serial_type;
 }
 
 int bx1_get_sound_frequency(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.sound_frequency;
 }
 
 int bx1_get_sound_latency(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.sound_latency;
 }
 
 void bx1_set_sound_frequency(bx1_handle h, int index)
 {
+	vm_lock guard(h);
 	(void)h;
 	if(0 <= index && index < 8) {
 		config.sound_frequency = index;
@@ -623,6 +703,7 @@ void bx1_set_sound_frequency(bx1_handle h, int index)
 
 void bx1_set_sound_latency(bx1_handle h, int index)
 {
+	vm_lock guard(h);
 	(void)h;
 	if(0 <= index && index < 5) {
 		config.sound_latency = index;
@@ -631,6 +712,7 @@ void bx1_set_sound_latency(bx1_handle h, int index)
 
 int bx1_vm_state_save(bx1_handle h, const char* path)
 {
+	vm_lock guard(h);
 	EMU* emu = emu_of(h);
 	emu->lock_vm();
 	bool result = dump_vm_state(emu, path);
@@ -640,6 +722,7 @@ int bx1_vm_state_save(bx1_handle h, const char* path)
 
 int bx1_vm_state_load(bx1_handle h, const char* path, const char* rollback_path)
 {
+	vm_lock guard(h);
 	EMU* emu = emu_of(h);
 	emu->lock_vm();
 	// No rollback dump means no way back, so do not touch the machine.
@@ -657,6 +740,7 @@ int bx1_vm_state_load(bx1_handle h, const char* path, const char* rollback_path)
 
 void bx1_set_cpu_power(bx1_handle h, int power)
 {
+	vm_lock guard(h);
 	config.cpu_power = power;
 	// EVENT caches config.cpu_power in its own `power` member: it reads the
 	// config in its constructor and then only re-reads it from
@@ -669,36 +753,42 @@ void bx1_set_cpu_power(bx1_handle h, int power)
 
 int bx1_get_cpu_power(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.cpu_power;
 }
 
 void bx1_set_full_speed(bx1_handle h, int enabled)
 {
+	vm_lock guard(h);
 	(void)h;
 	config.full_speed = (enabled != 0);
 }
 
 int bx1_get_full_speed(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.full_speed ? 1 : 0;
 }
 
 void bx1_set_drive_vm_in_opecode(bx1_handle h, int enabled)
 {
+	vm_lock guard(h);
 	config.drive_vm_in_opecode = (enabled != 0);
 	emu_of(h)->update_config();
 }
 
 int bx1_get_drive_vm_in_opecode(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.drive_vm_in_opecode ? 1 : 0;
 }
 
 void bx1_start_auto_key(bx1_handle h, const char* text)
 {
+	vm_lock guard(h);
 	if(text == NULL || text[0] == '\0') {
 		return;
 	}
@@ -747,58 +837,68 @@ void bx1_start_auto_key(bx1_handle h, const char* text)
 
 void bx1_stop_auto_key(bx1_handle h)
 {
+	vm_lock guard(h);
 	emu_of(h)->stop_auto_key();
 }
 
 int bx1_is_auto_key_running(bx1_handle h)
 {
+	vm_lock guard(h);
 	return emu_of(h)->is_auto_key_running() ? 1 : 0;
 }
 
 void bx1_set_romaji_to_kana(bx1_handle h, int enabled)
 {
+	vm_lock guard(h);
 	(void)h;
 	config.romaji_to_kana = (enabled != 0);
 }
 
 int bx1_get_romaji_to_kana(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.romaji_to_kana ? 1 : 0;
 }
 
 void bx1_set_monitor_type(bx1_handle h, int type)
 {
+	vm_lock guard(h);
 	config.monitor_type = type;
 	emu_of(h)->update_config();
 }
 
 int bx1_get_monitor_type(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.monitor_type;
 }
 
 void bx1_set_sound_type(bx1_handle h, int type)
 {
+	vm_lock guard(h);
 	config.sound_type = type;
 	emu_of(h)->update_config();
 }
 
 int bx1_get_sound_type(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.sound_type;
 }
 
 int bx1_get_vm_sound_type(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return vm_sound_type;
 }
 
 void bx1_set_volume(bx1_handle h, int device, int decibel_l, int decibel_r)
 {
+	vm_lock guard(h);
 	if(device < 0 || device >= USE_SOUND_VOLUME) {
 		return;
 	}
@@ -813,6 +913,7 @@ void bx1_set_volume(bx1_handle h, int device, int decibel_l, int decibel_r)
 
 void bx1_apply_volume(bx1_handle h, int device, int decibel_l, int decibel_r)
 {
+	vm_lock guard(h);
 	if(device < 0 || device >= USE_SOUND_VOLUME) {
 		return;
 	}
@@ -821,84 +922,98 @@ void bx1_apply_volume(bx1_handle h, int device, int decibel_l, int decibel_r)
 
 void bx1_set_scan_line(bx1_handle h, int enabled)
 {
+	vm_lock guard(h);
 	config.scan_line = (enabled != 0);
 	emu_of(h)->update_config();
 }
 
 int bx1_get_scan_line(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.scan_line ? 1 : 0;
 }
 
 void bx1_set_drive_type(bx1_handle h, int type)
 {
+	vm_lock guard(h);
 	config.drive_type = type;
 	emu_of(h)->update_config();
 }
 
 int bx1_get_drive_type(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.drive_type;
 }
 
 void bx1_set_keyboard_type(bx1_handle h, int type)
 {
+	vm_lock guard(h);
 	config.keyboard_type = type;
 	emu_of(h)->update_config();
 }
 
 int bx1_get_keyboard_type(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.keyboard_type;
 }
 
 void bx1_set_sound_noise_fdd(bx1_handle h, int enabled)
 {
+	vm_lock guard(h);
 	config.sound_noise_fdd = (enabled != 0);
 	emu_of(h)->update_config();
 }
 
 int bx1_get_sound_noise_fdd(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.sound_noise_fdd ? 1 : 0;
 }
 
 void bx1_set_sound_noise_cmt(bx1_handle h, int enabled)
 {
+	vm_lock guard(h);
 	config.sound_noise_cmt = (enabled != 0);
 	emu_of(h)->update_config();
 }
 
 int bx1_get_sound_noise_cmt(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.sound_noise_cmt ? 1 : 0;
 }
 
 void bx1_set_sound_tape_signal(bx1_handle h, int enabled)
 {
+	vm_lock guard(h);
 	config.sound_tape_signal = (enabled != 0);
 	emu_of(h)->update_config();
 }
 
 int bx1_get_sound_tape_signal(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.sound_tape_signal ? 1 : 0;
 }
 
 void bx1_set_sound_tape_voice(bx1_handle h, int enabled)
 {
+	vm_lock guard(h);
 	config.sound_tape_voice = (enabled != 0);
 	emu_of(h)->update_config();
 }
 
 int bx1_get_sound_tape_voice(bx1_handle h)
 {
+	vm_lock guard(h);
 	(void)h;
 	return config.sound_tape_voice ? 1 : 0;
 }
@@ -918,6 +1033,7 @@ const char* bx1_get_sound_device_caption(int index)
 
 int bx1_get_volume_l(bx1_handle h, int device)
 {
+	vm_lock guard(h);
 	(void)h;
 	if(device < 0 || device >= USE_SOUND_VOLUME) {
 		return 0;
@@ -927,6 +1043,7 @@ int bx1_get_volume_l(bx1_handle h, int device)
 
 int bx1_get_volume_r(bx1_handle h, int device)
 {
+	vm_lock guard(h);
 	(void)h;
 	if(device < 0 || device >= USE_SOUND_VOLUME) {
 		return 0;
