@@ -350,8 +350,15 @@ proc main() =
       return
     let entries = driveSet[drv].entries
     let groups = driveSet[drv].groups
-    # Like the original, the list only appears for a mount that actually
-    # produced more than one disk; a plain single-disk image gets no section.
+    # The original hides this list unless the mount produced more than one
+    # disk (update_floppy_disk_menu, winmain.cpp: `bank_num > 1`), which
+    # leaves a single-disk mount with nothing in the menu naming what is in
+    # the drive. Shown from one disk up instead: the checked entry is how
+    # this app answers "what is loaded", and a menu that goes blank for the
+    # commonest case answers it nowhere.
+    let hasDisks = entries.len > 0
+    # The mount's own caption stays a multi-disk affair: with one disk it
+    # would only repeat the entry directly beneath it.
     let multiDisk = entries.len > 1
     # Per-file captions only earn their space when the disks came from more
     # than one file, exactly as Bubilator88 shows its image groups.
@@ -359,14 +366,17 @@ proc main() =
     setCaptionItems[drv].hidden = not multiDisk
     if multiDisk:
       setCaptionItems[drv].title = driveSource[drv].extractFilename()
-    diskSepItems[drv].hidden = not multiDisk
+    diskSepItems[drv].hidden = not hasDisks
     for i in 0 ..< DiskSlots:
-      let show = multiDisk and i < entries.len
+      let show = hasDisks and i < entries.len
       diskItems[drv][i].hidden = not show
       var caption = ""
       if show:
+        # The position number tells two disks of a set apart; a lone disk
+        # has nothing to be told apart from, so it is named plainly.
         diskItems[drv][i].title =
-          (if showGroups: "  " else: "") & &"{i+1}: " & entries[i].label
+          (if showGroups: "  " else: "") &
+          (if multiDisk: &"{i+1}: " else: "") & entries[i].label
         diskItems[drv][i].checked = (driveIndex[drv] == i)
         if showGroups:
           for g in groups:
@@ -1143,13 +1153,14 @@ proc main() =
     correctTiming.setAction(makeToggleAction(correctTiming, drv, bx1SetCorrectDiskTiming))
     ignoreCrc.checked = bx1GetIgnoreDiskCrc(h, drv.cint) != 0
     ignoreCrc.setAction(makeToggleAction(ignoreCrc, drv, bx1SetIgnoreDiskCrc))
-    # The title's disk list, closing the submenu. Hidden entirely unless the
-    # mount produced more than one disk, exactly like the original's bank
-    # list - including the separator above it, which would otherwise be left
-    # trailing at the end of the menu with nothing under it. Each slot is
-    # preceded by its own caption slot, which only shows for the first disk
-    # of a file when the disks came from several files - fixed slots cannot
-    # be inserted between one another later.
+    # The title's disk list, closing the submenu. Hidden entirely while the
+    # drive holds nothing - including the separator above it, which would
+    # otherwise be left trailing at the end of the menu with nothing under
+    # it. From one disk up it shows, which is where this departs from the
+    # original's bank list; see refreshFloppyMenu. Each slot is preceded by
+    # its own caption slot, which only shows for the first disk of a file
+    # when the disks came from several files - fixed slots cannot be
+    # inserted between one another later.
     diskSepItems[drv] = fd.addSeparator()
     setCaptionItems[drv] = fd.addItem("")
     setCaptionItems[drv].enabled = false # a caption, not an action
