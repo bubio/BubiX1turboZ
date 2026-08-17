@@ -109,6 +109,24 @@ proc sdlFreeStr(mem: cstring) {.importc: "SDL_free", cdecl.}
 proc sdlGetDisplayUsableBounds(displayIndex: cint, bounds: var Rect): cint
   {.importc: "SDL_GetDisplayUsableBounds", cdecl.}
 
+const
+  ## How SDL samples the guest texture when it is drawn at a size other than
+  ## its own. These are SDL_ScaleMode values (SDL 2.0.12 and later);
+  ## SDL_ScaleModeBest is left out deliberately - it only means anisotropic
+  ## filtering on the Direct3D backends and resolves to linear everywhere
+  ## else, so on this app's Metal renderer it would be a menu entry that
+  ## changes nothing.
+  ScaleModeNearest = 0.cint
+  ScaleModeLinear = 1.cint
+
+# Set per texture rather than through the SDL_RENDER_SCALE_QUALITY hint: the
+# hint is only read when a texture is created, so switching filters at
+# runtime would mean rebuilding the guest texture, and it would apply to the
+# status bar's 8x8 glyph texture as well. The Nim sdl2 binding does not wrap
+# this call, so it is declared here; returns 0 on success.
+proc sdlSetTextureScaleMode(texture: TexturePtr, scaleMode: cint): cint
+  {.importc: "SDL_SetTextureScaleMode", cdecl.}
+
 proc fail(msg: string) =
   stderr.writeLine "bubix1turboz: " & msg
   quit 1
@@ -204,6 +222,12 @@ proc main() =
   # in hostCfg above. Read up here because the Host menu is built before
   # the SDL window exists but its actions drive both.
   var showStatusBar = hostCfg.getBool("ShowStatusBar", true)
+  # 0 = nearest neighbour, 1 = bilinear. Nearest stays the default: the X1
+  # draws text and graphics on exact pixel boundaries, and linear filtering
+  # blurs glyphs at any non-integer window size (phase 5 user decision).
+  # Bilinear is offered because that blur is what some players want from a
+  # stretched fullscreen picture.
+  var scaleQuality = clamp(hostCfg.getInt("ScaleQuality", 0), 0, 1)
 
   # Assigned once the Volume panel exists, further down. A reset can rebuild
   # the VM (see vmSoundType above), and the core hands the new one the
@@ -226,6 +250,9 @@ proc main() =
   var romajiItemRef = MenuItemRef(tag: 0)
   var sdlWin: WindowPtr = nil
   var renderer: RendererPtr = nil
+  # Created further down, but declared here because Host > Screen is built
+  # before that point and its filter items set the scale mode on it.
+  var screenTexture: TexturePtr = nil
   # Opened further down, but declared here because Host > Rec Sound is built
   # before that point and has to lock the device it records from.
   var audioDev: AudioDeviceID = 0
@@ -255,6 +282,13 @@ proc main() =
   proc guestHeight(): int =
     ## The guest picture's height in window points at the current aspect.
     if stretchType == 0: ScreenHeight else: aspectHeight
+
+  proc applyScaleQuality() =
+    ## Pushes the current filter to the guest texture. A no-op before the
+    ## texture exists; the texture applies it itself once created.
+    if screenTexture != nil:
+      discard sdlSetTextureScaleMode(screenTexture,
+        if scaleQuality == 1: ScaleModeLinear else: ScaleModeNearest)
 
   proc statusBarHeight(): cint =
     (if showStatusBar: StatusBarHeight else: 0).cint
@@ -1510,6 +1544,18 @@ proc main() =
       fullscreenStretch = v.int
       bx1SetFullscreenStretchType(h, v))
 
+  screenMenu.addSeparator()
+  # The original's Host > Filter offers the core's own USE_SCREEN_FILTER
+  # modes, which this build does not implement (the OSD side is a stub).
+  # These two are SDL's own texture scaling modes instead, which is the
+  # whole of what it offers: there is no bicubic filter in SDL2.
+  screenMenu.addRadioGroup(
+    @[tr(msgFilterNearest), tr(msgFilterBilinear)],
+    @[0, 1], scaleQuality,
+    proc (v: cint) =
+      scaleQuality = v.int
+      applyScaleQuality())
+
   # --- Host > Sound ---
   let hostSoundMenu = hostMenu.addSubmenu(tr(msgSound))
   # Sample rate and latency are stored and take effect at the next launch.
@@ -1580,9 +1626,11 @@ proc main() =
         uiLanguage = chosen
         filedialog.message(tr(msgLanguageChangedTitle), tr(msgLanguageChangedBody)))
 
-  # Nearest-neighbor scaling: X1 text/graphics are drawn at exact pixel
-  # boundaries, and linear filtering (SDL's default for the accelerated
-  # renderer) blurs glyphs on any non-integer window resize.
+  # Nearest-neighbor scaling for everything created from here on, the status
+  # bar's glyph texture included: the 8x8 ANK font is a bitmap and linear
+  # filtering (SDL's default for the accelerated renderer) blurs it at any
+  # non-integer window size. The guest picture overrides this per texture
+  # from Host > Screen - see applyScaleQuality.
   discard setHint("SDL_RENDER_SCALE_QUALITY", "0")
 
   # Native 640x400, not the core's own WINDOW_HEIGHT_ASPECT=480 (which
@@ -1628,6 +1676,8 @@ proc main() =
     SDL_TEXTUREACCESS_STREAMING, ScreenWidth, ScreenHeight)
   if texture == nil:
     fail "SDL_CreateTexture failed: " & $getError()
+  screenTexture = texture
+  applyScaleQuality()
   # Alpha comes back as 0 from the core (see docs/dev/DevelopmentPlan.md
   # 1.4); blending it would make the whole picture transparent.
   discard texture.setTextureBlendMode(BlendMode_None)
@@ -1940,6 +1990,7 @@ proc main() =
   bx1SaveConfig(h, paths.configFilePath().cstring)
   recentfiles.save(paths.recentFilesPath(), recent)
   hostCfg.setBool("ShowStatusBar", showStatusBar)
+  hostCfg.setInt("ScaleQuality", scaleQuality)
   # "auto", "en" or "ja" - read back at the very start of the next launch,
   # before anything can put a word on screen.
   hostCfg.setStr("UILanguage", uiLanguage)
