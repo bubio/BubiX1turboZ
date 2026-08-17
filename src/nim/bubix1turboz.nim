@@ -147,7 +147,7 @@ proc sdlSetTextureScaleMode(texture: TexturePtr, scaleMode: cint): cint
 # park the application's own thread inside AppKit for as long as they
 # like - no longer stop the machine and starve the audio device.
 #
-# What crosses between the two threads is only this: three flags and a
+# What crosses between the two threads is only this: two flags and a
 # handle. Everything else the emulation thread touches lives behind
 # `bx1_*`, and every one of those calls takes the VM lock (see the vm_lock
 # guard in src/bridge/bubix1_api.cpp), so the two threads are never inside
@@ -163,7 +163,6 @@ var
     ## How much audio the pacing loop keeps queued. Same.
   runningFlag: Atomic[bool]
   fullSpeedFlag: Atomic[bool]
-  skipFramesCount: Atomic[int]
   emuThread: Thread[void]
 
 proc running(): bool = runningFlag.load(moRelaxed)
@@ -172,11 +171,6 @@ proc setRunning(value: bool) = runningFlag.store(value, moRelaxed)
 
 proc fullSpeed(): bool = fullSpeedFlag.load(moRelaxed)
 proc setFullSpeed(value: bool) = fullSpeedFlag.store(value, moRelaxed)
-
-proc skipFrames(): int = skipFramesCount.load(moRelaxed)
-proc setSkipFrames(value: int) = skipFramesCount.store(value, moRelaxed)
-  ## Emulated frames since the last time Full Speed let one be drawn. Reset
-  ## by anything that wants the picture back immediately.
 
 
 const FullSpeedBatchMs = 8'u32
@@ -206,7 +200,6 @@ proc emulationLoop() {.thread.} =
       var guardCount = 0
       while getTicks() < batchEnd:
         discard bx1RunFrame(emuHandle)
-        setSkipFrames(skipFrames() + 1)
         inc guardCount
         if guardCount > 2000:
           break
@@ -1059,7 +1052,6 @@ proc main() =
     setFullSpeed(m.fullSpeed)
     fullSpeedItem.checked = fullSpeed()
     bx1SetFullSpeed(h, fullSpeed().cint)
-    setSkipFrames(0)
     if warning.len > 0:
       filedialog.message(tr(msgLoadStateTitle), warning)
 
@@ -1097,7 +1089,6 @@ proc main() =
     result = statepicker.choose(
       tr(if forSaving: msgSaveStateTitle else: msgLoadStateTitle), cells)
     bx1MuteSound(h)
-    setSkipFrames(0)
 
   controlMenu.addItem(tr(msgQuickSave), proc () =
     saveStateTo(paths.stateSlotPath(QuickSlot)), key = "s")
@@ -1128,7 +1119,6 @@ proc main() =
   nativemenu.setAction(fullSpeedItem, proc () =
     fullSpeedItem.checked = not fullSpeedItem.checked
     setFullSpeed(fullSpeedItem.checked)
-    setSkipFrames(0)
     bx1SetFullSpeed(h, fullSpeed().cint))
   nativemenu.setAction(driveVmItem, proc () =
     driveVmItem.checked = not driveVmItem.checked
@@ -2051,16 +2041,18 @@ proc main() =
       if fullSpeed(): 1000.0
       else: FrameIntervalMs
     let frameTicks = getTicks()
+    # The next draw is resynced whenever it is more than one interval away
+    # in *either* direction. Behind, because catching up on a stall (or an
+    # occluded window) would mean a burst of back-to-back presents. Ahead,
+    # because switching Full Speed off leaves a deadline set a whole second
+    # from now, and waiting it out would freeze the picture just as the
+    # user asked to watch it again.
+    if abs(nextDrawTicks - frameTicks.float) > drawInterval:
+      nextDrawTicks = frameTicks.float
     if frameTicks.float < nextDrawTicks:
       delay(1)
     else:
       nextDrawTicks += drawInterval
-      if nextDrawTicks < frameTicks.float:
-        # Fell far enough behind (a stall, the window occluded, or Full
-        # Speed just switched off) that catching up would mean a burst of
-        # back-to-back presents. Resync to now instead.
-        nextDrawTicks = frameTicks.float + drawInterval
-      setSkipFrames(0)
       drawFrame()
 
     # Status is sampled on a timer rather than every frame, the way the

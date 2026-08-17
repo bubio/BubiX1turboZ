@@ -19,10 +19,22 @@ proc bx1SpecialReset*(h: Bx1Handle) {.importc: "bx1_special_reset", bx1.}
 proc bx1RunFrame*(h: Bx1Handle): cint {.importc: "bx1_run_frame", bx1.}
 proc bx1DrawScreen*(h: Bx1Handle) {.importc: "bx1_draw_screen", bx1.}
 proc bx1Lock*(h: Bx1Handle) {.importc: "bx1_lock", bx1.}
+  ## Rarely needed: every other proc here takes this lock for the length of
+  ## its own call (the `vm_lock` guard in bubix1_api.cpp), so the two
+  ## threads this app runs are never inside the core at the same time
+  ## without anyone asking.
+  ##
+  ## Reach for it when a *pair* of calls has to be atomic, which is
+  ## anything that reads through a pointer the core handed back: the lock
+  ## is released when the call that returned the pointer does, and the
+  ## emulation thread is free to rewrite what it points at from that
+  ## instant. `bx1GetFramebuffer` and the three `cstring` getters below are
+  ## the ones this applies to.
 proc bx1Unlock*(h: Bx1Handle) {.importc: "bx1_unlock", bx1.}
 
 proc bx1GetFramebuffer*(h: Bx1Handle): ptr UncheckedArray[uint32]
   {.importc: "bx1_get_framebuffer", bx1.}
+  ## Valid only while the VM lock is held; see `bx1Lock`.
 proc bx1GetScreenWidth*(h: Bx1Handle): cint {.importc: "bx1_get_screen_width", bx1.}
 proc bx1GetScreenHeight*(h: Bx1Handle): cint {.importc: "bx1_get_screen_height", bx1.}
 proc bx1GetAspectHeight*(h: Bx1Handle): cint {.importc: "bx1_get_aspect_height", bx1.}
@@ -68,8 +80,13 @@ proc bx1GetFloppyBankCount*(h: Bx1Handle, drv: cint): cint
   {.importc: "bx1_get_floppy_bank_count", bx1.}
 proc bx1GetFloppyBankName*(h: Bx1Handle, drv, bank: cint): cstring
   {.importc: "bx1_get_floppy_bank_name", bx1.}
+  ## Points into storage the core owns and rewrites on a disk change, so
+  ## the conversion to a Nim string has to happen with the VM lock held -
+  ## see the note above `bx1Lock`. Currently unreferenced.
 proc bx1GetFloppyPath*(h: Bx1Handle, drv: cint): cstring
   {.importc: "bx1_get_floppy_path", bx1.}
+  ## Same: copy it under the lock. Currently unreferenced (the disk menus
+  ## are built from `bx1ScanD88Banks`, which fills a caller-owned array).
 proc bx1GetFloppyBank*(h: Bx1Handle, drv: cint): cint
   {.importc: "bx1_get_floppy_bank", bx1.}
 
@@ -97,6 +114,8 @@ proc bx1IsFloppyDiskInserted*(h: Bx1Handle, drv: cint): cint
   {.importc: "bx1_is_floppy_disk_inserted", bx1.}
 proc bx1IsTapeInserted*(h: Bx1Handle): cint {.importc: "bx1_is_tape_inserted", bx1.}
 proc bx1GetTapeMessage*(h: Bx1Handle): cstring {.importc: "bx1_get_tape_message", bx1.}
+  ## Copy it under the lock; see `bx1Lock`. Currently unreferenced (no UI
+  ## opens a tape).
 
 proc bx1SetFloppyWriteProtected*(h: Bx1Handle, drv, protect: cint)
   {.importc: "bx1_set_floppy_write_protected", bx1.}
