@@ -122,9 +122,15 @@ extern NSString *bx1_ns_string(const char *bytes);
 	Returns the chosen row, or -1 if the user cancelled. A pop-up rather than
 	a table keeps this to an app-modal alert, matching the file panels above:
 	no parent window, no libui modal bookkeeping.
+
+	Both button titles arrive from the caller. This file is the macOS
+	backend of a UI meant to grow GTK and Win32 siblings, so the words it
+	shows come from the app's own catalog (src/nim/bubix1/i18n.nim) rather
+	than from anything only AppKit can read.
 */
 int bx1_dialog_choose_disk(const char *title, const char *const *rows, int count,
-                           int initial)
+                           int initial, const char *insert_label,
+                           const char *cancel_label)
 {
 	@autoreleasepool {
 		NSAlert *alert;
@@ -136,8 +142,8 @@ int bx1_dialog_choose_disk(const char *title, const char *const *rows, int count
 		}
 		alert = [[[NSAlert alloc] init] autorelease];
 		[alert setMessageText:bx1_ns_string(title)];
-		[alert addButtonWithTitle:@"Insert"];
-		[alert addButtonWithTitle:@"Cancel"];
+		[alert addButtonWithTitle:bx1_ns_string(insert_label)];
+		[alert addButtonWithTitle:bx1_ns_string(cancel_label)];
 
 		popup = [[[NSPopUpButton alloc]
 			initWithFrame:NSMakeRect(0, 0, 360, 26) pullsDown:NO] autorelease];
@@ -161,13 +167,13 @@ void bx1_dialog_free(char *text)
 	free(text);
 }
 
-void bx1_dialog_message(const char *title, const char *body)
+void bx1_dialog_message(const char *title, const char *body, const char *ok_label)
 {
 	@autoreleasepool {
 		NSAlert *alert = [[[NSAlert alloc] init] autorelease];
-		[alert setMessageText:title != NULL ? [NSString stringWithUTF8String:title] : @""];
-		[alert setInformativeText:body != NULL ? [NSString stringWithUTF8String:body] : @""];
-		[alert addButtonWithTitle:@"OK"];
+		[alert setMessageText:bx1_ns_string(title)];
+		[alert setInformativeText:bx1_ns_string(body)];
+		[alert addButtonWithTitle:bx1_ns_string(ok_label)];
 		[alert runModal];
 	}
 }
@@ -192,7 +198,8 @@ void bx1_dialog_message(const char *title, const char *body)
 	is the part of -run that makes the app able to show one; calling it
 	early is safe because -run skips it once it has been done.
 */
-int bx1_dialog_missing_rom(const char *title, const char *body, const char *folder)
+int bx1_dialog_missing_rom(const char *title, const char *body, const char *folder,
+                           const char *open_label, const char *quit_label)
 {
 	@autoreleasepool {
 		NSAlert *alert;
@@ -212,12 +219,12 @@ int bx1_dialog_missing_rom(const char *title, const char *body, const char *fold
 
 		alert = [[[NSAlert alloc] init] autorelease];
 		[alert setAlertStyle:NSAlertStyleWarning];
-		[alert setMessageText:title != NULL ? [NSString stringWithUTF8String:title] : @""];
-		[alert setInformativeText:body != NULL ? [NSString stringWithUTF8String:body] : @""];
+		[alert setMessageText:bx1_ns_string(title)];
+		[alert setInformativeText:bx1_ns_string(body)];
 		// First button added is the default one, and opening the folder is
 		// the only action that gets the user closer to a running emulator.
-		[alert addButtonWithTitle:@"Open ROM Folder"];
-		[alert addButtonWithTitle:@"Quit"];
+		[alert addButtonWithTitle:bx1_ns_string(open_label)];
+		[alert addButtonWithTitle:bx1_ns_string(quit_label)];
 
 		if ([alert runModal] != NSAlertFirstButtonReturn) {
 			return 0;

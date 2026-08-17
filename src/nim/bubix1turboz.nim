@@ -47,6 +47,7 @@ import bubix1/fddnoise
 import bubix1/savestate
 import bubix1/statepicker
 import bubix1/capture
+import bubix1/i18n
 
 const
   ScreenWidth = 640
@@ -144,15 +145,20 @@ proc reportMissingRom() =
   let dir = paths.romsDir()
   stderr.writeLine "bubix1turboz: " & IplRomFileName & " not found in " & dir
   filedialog.missingRom(
-    "BIOS ROM not found",
-    "BubiX1turboZ needs the X1 turbo Z BIOS ROM to start.\n\n" &
-    "Put " & IplRomFileName & " - and the font ROMs FNT0808.X1, " &
-    "FNT0816.X1 and FNT1616.X1 - into this folder, then open " &
-    "BubiX1turboZ again:\n\n" & dir,
+    tr(msgBiosMissingTitle),
+    trf(msgBiosMissingBody, IplRomFileName, dir),
     dir)
 
 proc main() =
   paths.ensureDirsExist()
+
+  # Host-side preferences the emulation core cannot hold - see hostconfig.nim.
+  # Read first thing, before anything can put a word on screen: the alert
+  # below is the earliest piece of UI there is, and the language it speaks
+  # is one of the settings in here.
+  var hostCfg = hostconfig.load(paths.hostConfigPath())
+  var uiLanguage = hostCfg.getStr("UILanguage", "auto")
+  i18n.setLanguage(uiLanguage)
 
   # Invariant 1: uing before SDL.
   uing.init()
@@ -203,9 +209,8 @@ proc main() =
 
   # Host-side view settings. These are not in the core's config_t on this
   # platform (config.show_status_bar is Win32-only there), so they persist
-  # separately - see hostconfig.nim. Declared up here because the Host menu
-  # is built before the SDL window exists but its actions drive both.
-  var hostCfg = hostconfig.load(paths.hostConfigPath())
+  # in hostCfg above. Read up here because the Host menu is built before
+  # the SDL window exists but its actions drive both.
   var showStatusBar = hostCfg.getBool("ShowStatusBar", true)
 
   # Assigned once the Volume panel exists, further down. A reset can rebuild
@@ -515,7 +520,7 @@ proc main() =
       else:
         var index = 0
         if disks.entries.len > 1:
-          index = filedialog.chooseDisk("Select a disk to insert", pickerRows(disks))
+          index = filedialog.chooseDisk(tr(msgSelectDiskTitle), pickerRows(disks))
           if index < 0:
             return # cancelled: leave the drive, and Recent, untouched
         let drv = min(startDrive, FloppyDrives - 1)
@@ -578,9 +583,7 @@ proc main() =
   # placeholder item but wires no action to it, which Cocoa then reports
   # as permanently disabled (no target-action pair to validate).
   appMenuHost.addAboutItem(proc (sender: MenuItem, w: Window) =
-    filedialog.message("BubiX1turboZ " & appVersion,
-      "Multi-platform Sharp X1 turbo Z emulator.\n" &
-      "Emulation core: Common Source Code Project's eX1turboZ (GPL-2.0-or-later)."))
+    filedialog.message("BubiX1turboZ " & appVersion, tr(msgAboutBody)))
 
   # Device and Host menus are built natively after win.show(); see below.
 
@@ -641,12 +644,12 @@ proc main() =
   # debugger console API is stubbed out here, and a menu that does nothing
   # is worse than no menu), and "Exit" (libui-ng puts Quit in the
   # application menu, where macOS expects it).
-  let controlMenu = nativemenu.addMenu("Control")
-  controlMenu.addItem("Reset", proc () = resetMachine(), key = "r")
+  let controlMenu = nativemenu.addMenu(tr(msgMenuControl))
+  controlMenu.addItem(tr(msgReset), proc () = resetMachine(), key = "r")
   # The original labels special_reset() "NMI" for this machine; on the X1
   # turbo it is the front-panel NMI button, which is also how a NEW ON
   # reset is triggered.
-  controlMenu.addItem("NMI", proc () = bx1SpecialReset(h))
+  controlMenu.addItem(tr(msgNmi), proc () = bx1SpecialReset(h))
   controlMenu.addSeparator()
 
   # CPU speed multiplier: a radio group, so each item clears the others.
@@ -659,21 +662,23 @@ proc main() =
     result = proc () =
       bx1SetCpuPower(h, idx.cint)
       syncCpuItems()
-  for i, label in ["CPU x1", "CPU x2", "CPU x4", "CPU x8", "CPU x16"]:
-    cpuItems[i] = controlMenu.addItem(label, makeCpuAction(i))
-  let fullSpeedItem = controlMenu.addItem("Full Speed")
-  let driveVmItem = controlMenu.addItem("Drive VM in M1/R/W Cycle")
+  # The multipliers are the original's own 1/2/4/8/16, built from one
+  # message rather than five so a translation cannot renumber them.
+  for i, factor in [1, 2, 4, 8, 16]:
+    cpuItems[i] = controlMenu.addItem(trf(msgCpuPower, factor), makeCpuAction(i))
+  let fullSpeedItem = controlMenu.addItem(tr(msgFullSpeed))
+  let driveVmItem = controlMenu.addItem(tr(msgDriveVmInOpecode))
   controlMenu.addSeparator()
 
-  controlMenu.addItem("Paste", proc () =
+  controlMenu.addItem(tr(msgPaste), proc () =
     # The original pastes the clipboard through the core's auto key, which
     # replays it as real keystrokes rather than injecting text - so it
     # works with any program running in the guest.
     let text = clipboard.getText()
     if text.len > 0:
       bx1StartAutoKey(h, text.cstring), key = "v")
-  controlMenu.addItem("Stop", proc () = bx1StopAutoKey(h))
-  let romajiItem = controlMenu.addItem("Romaji to Kana")
+  controlMenu.addItem(tr(msgStopPaste), proc () = bx1StopAutoKey(h))
+  let romajiItem = controlMenu.addItem(tr(msgRomajiToKana))
   romajiItemRef = romajiItem
   controlMenu.addSeparator()
 
@@ -817,12 +822,12 @@ proc main() =
     createDir paths.scratchDir() # $TMPDIR can be reaped under a long session
     let blob = scratch("save.vmst")
     if bx1VmStateSave(h, blob.cstring) == 0:
-      filedialog.message("Save State", "The machine state could not be captured.")
+      filedialog.message(tr(msgSaveStateTitle), tr(msgStateCaptureFailed))
       return
     try:
       savestate.save(path, blob, currentMeta(), thumbnailPng())
     except CatchableError as e:
-      filedialog.message("Save State", e.msg)
+      filedialog.message(tr(msgSaveStateTitle), e.msg)
     finally:
       removeFile(blob)
     refreshQuickStateMenu()
@@ -839,6 +844,9 @@ proc main() =
     ## about to restore. Hence the wait below: let every insert land
     ## first, then apply the state on top. The frames this runs are
     ## thrown away by that same state, so they cost nothing but time.
+    # Each entry is a whole sentence rather than a fragment to be glued into
+    # one: which part of "X is missing" is the subject and which the verb
+    # differs by language, so the joining has to happen between sentences.
     var stale: seq[string]
     var awaiting: seq[int]
     for drv in 0 ..< FloppyDrives:
@@ -860,7 +868,7 @@ proc main() =
         set = diskset.build([d.image])
         index = (if d.bank < set.entries.len: d.bank else: 0)
       if set.entries.len == 0:
-        stale.add d.image.extractFilename() & " is missing"
+        stale.add trf(msgDiskMissing, d.image.extractFilename())
         ejectFloppy(drv)
         continue
       driveSet[drv] = set
@@ -870,12 +878,12 @@ proc main() =
       if mountAt(drv, index):
         awaiting.add drv
       else:
-        stale.add d.image.extractFilename() & " could not be mounted"
+        stale.add trf(msgDiskNotMounted, d.image.extractFilename())
       bx1SetFloppyWriteProtected(h, drv.cint, d.writeProtected.cint)
       if d.imageSize > 0:
         let (size, crc) = fileFingerprint(d.image)
         if size != d.imageSize or crc != d.imageCrc32:
-          stale.add d.image.extractFilename() & " has changed on disk"
+          stale.add trf(msgDiskChanged, d.image.extractFilename())
     var pending = true
     var guard = 0
     while pending and guard < 300:
@@ -887,7 +895,7 @@ proc main() =
         discard bx1RunFrame(h)
         inc guard
     if stale.len > 0:
-      result = "The state was restored, but " & stale.join(", ") & "."
+      result = tr(msgStateRestoredWithIssues) & "\n" & stale.join("\n")
 
   proc loadStateFrom(path: string) =
     if not fileExists(path):
@@ -896,36 +904,35 @@ proc main() =
     try:
       info = savestate.readInfo(path)
     except CatchableError as e:
-      filedialog.message("Load State", e.msg)
+      filedialog.message(tr(msgLoadStateTitle), e.msg)
       return
     let m = info.meta
 
     # Everything that can refuse the load is checked before the machine is
     # touched at all, so a rejected state leaves the session running.
     if m.coreStateId != bx1CoreStateId():
-      filedialog.message("Load State",
-        "This save state was written against a different build of the " &
-        "emulation core and can no longer be read.")
+      filedialog.message(tr(msgLoadStateTitle), tr(msgStateCoreMismatch))
       return
     if m.machine != Machine:
-      filedialog.message("Load State", "This save state is for a different machine.")
+      filedialog.message(tr(msgLoadStateTitle), tr(msgStateMachineMismatch))
       return
     let ipl = iplFingerprint()
     if m.iplCrc32 != 0 and ipl != 0 and m.iplCrc32 != ipl:
-      filedialog.message("Load State",
-        "This save state was made with a different IPL ROM. States carry no " &
-        "ROM data, so restoring one against another ROM would leave the " &
-        "machine in an inconsistent state.")
+      filedialog.message(tr(msgLoadStateTitle), tr(msgStateIplMismatch))
       return
     # Settings the original reacts to by throwing the VM away and building
     # a new one. This layer replaces device state only and cannot ask for
     # that rebuild at load time (EMU::vm is protected, and the core does it
     # only from its own load_state and from EMU::reset), so a mismatch is
     # refused rather than half-applied.
+    # The setting that differs, as a phrase that goes into the message
+    # below, plus the whole message when this one has a remedy of its own -
+    # which the sound board does (a reset) and the rest do not. Two
+    # messages rather than one sentence with a swappable tail: what can be
+    # done about it is not a clause that can be lifted out of a Japanese
+    # sentence and put back into another.
     var mismatch = ""
-    # What the user can do about it, which is not the same for every row:
-    # the sound board is reachable through a reset, the rest are not.
-    var remedy = "which cannot be changed while the machine is running."
+    var mismatchMessage = ""
     # Sound type is in this list, not applied like the settings below it:
     # VM's constructor builds a different device chain for each value
     # (x1.cpp:116-125 adds the OPM boards), and VM::process_state checks
@@ -933,18 +940,19 @@ proc main() =
     # a state from another chain would fail the apply and roll back. Say
     # why up front instead.
     if m.reinit.soundType != vmSoundType():
-      mismatch = "sound board"
-      remedy = "which this machine is not running. Pick it again in " &
-        "Device > Sound, reset the machine (Control > Reset), then load " &
-        "the state."
-    elif m.reinit.printerType != bx1GetPrinterType(h).int: mismatch = "printer"
-    elif m.reinit.serialType != bx1GetSerialType(h).int: mismatch = "serial"
-    elif m.reinit.soundFrequency != vmSoundFrequency: mismatch = "sound frequency"
-    elif m.reinit.soundLatency != vmSoundLatency: mismatch = "sound latency"
+      mismatchMessage = tr(msgStateSoundBoardMismatch)
+    elif m.reinit.printerType != bx1GetPrinterType(h).int:
+      mismatch = tr(msgSettingPrinter)
+    elif m.reinit.serialType != bx1GetSerialType(h).int:
+      mismatch = tr(msgSettingSerial)
+    elif m.reinit.soundFrequency != vmSoundFrequency:
+      mismatch = tr(msgSettingSoundFrequency)
+    elif m.reinit.soundLatency != vmSoundLatency:
+      mismatch = tr(msgSettingSoundLatency)
     if mismatch.len > 0:
-      filedialog.message("Load State",
-        "This save state was made with a different " & mismatch & " setting, " &
-        remedy)
+      mismatchMessage = trf(msgStateSettingMismatch, mismatch)
+    if mismatchMessage.len > 0:
+      filedialog.message(tr(msgLoadStateTitle), mismatchMessage)
       return
 
     # Everything that can fail without touching the machine happens before
@@ -955,7 +963,7 @@ proc main() =
     try:
       savestate.extractVm(path, blob)
     except CatchableError as e:
-      filedialog.message("Load State", e.msg)
+      filedialog.message(tr(msgLoadStateTitle), e.msg)
       return
 
     # The auto key would go on typing into the restored machine; the core's
@@ -980,9 +988,7 @@ proc main() =
       # The VM state itself rolled back inside the bridge, but the mounts
       # and settings above did not - say so rather than implying the
       # session is untouched.
-      filedialog.message("Load State",
-        "This save state could not be applied. The machine kept running " &
-        "from where it was, but the drives now hold the state's disks.")
+      filedialog.message(tr(msgLoadStateTitle), tr(msgStateApplyFailed))
       return
     bx1SetCpuPower(h, m.cpuPower.cint)
     syncCpuItems()
@@ -991,7 +997,7 @@ proc main() =
     bx1SetFullSpeed(h, fullSpeed.cint)
     skipFrames = 0
     if warning.len > 0:
-      filedialog.message("Load State", warning)
+      filedialog.message(tr(msgLoadStateTitle), warning)
 
   proc pickSlot(forSaving: bool): int =
     ## Runs the slot grid. The emulation loop is stopped for as long as it
@@ -1006,13 +1012,13 @@ proc main() =
         # Bubilator88 numbers its slots from 1 on screen. The files stay
         # slot0..slot9 (paths.stateSlotPath), which nothing but this line
         # and the picker's own indexing ever sees.
-        caption: "Slot " & $(slot + 1),
+        caption: trf(msgSlotCaption, slot + 1),
         # Saving overwrites, so every slot is a target; loading needs one
         # with something in it.
         enabled: forSaving or info.isSome)
       if info.isSome:
         let meta = info.get.meta
-        cell.detail = meta.savedAt.fromUnix().local().format("MM/dd HH:mm")
+        cell.detail = meta.savedAt.fromUnix().local().format(tr(msgStateDateFormat))
         cell.disks = meta.title
         # The title comes from the file the user opened, so it is the
         # better label; a disk's own name (raw D88 bytes, decoded on the
@@ -1025,24 +1031,24 @@ proc main() =
         cell.thumbnail = savestate.readThumbnail(paths.stateSlotPath(slot))
       cells.add cell
     result = statepicker.choose(
-      if forSaving: "Save State" else: "Load State", cells)
+      tr(if forSaving: msgSaveStateTitle else: msgLoadStateTitle), cells)
     bx1MuteSound(h)
     skipFrames = 0
 
-  controlMenu.addItem("Quick Save", proc () =
+  controlMenu.addItem(tr(msgQuickSave), proc () =
     saveStateTo(paths.stateSlotPath(QuickSlot)), key = "s")
-  quickLoadItem = controlMenu.addItem("Quick Load", proc () =
+  quickLoadItem = controlMenu.addItem(tr(msgQuickLoad), proc () =
     loadStateFrom(paths.stateSlotPath(QuickSlot)), key = "l")
   # A caption, not an action: what the quick save currently holds, shown
   # the way the FD0/FD1 menus caption their disk lists.
   quickInfoItem = controlMenu.addItem("")
   quickInfoItem.enabled = false
   controlMenu.addSeparator()
-  controlMenu.addItem("Save State…", proc () =
+  controlMenu.addItem(tr(msgSaveStateDots), proc () =
     let slot = pickSlot(true)
     if slot >= 0:
       saveStateTo(paths.stateSlotPath(slot)))
-  controlMenu.addItem("Load State…", proc () =
+  controlMenu.addItem(tr(msgLoadStateDots), proc () =
     let slot = pickSlot(false)
     if slot >= 0:
       loadStateFrom(paths.stateSlotPath(slot)))
@@ -1125,19 +1131,20 @@ proc main() =
       item.checked = not item.checked
       setter(h, drv.cint, item.checked.cint)
 
-  let diskMenu = nativemenu.addMenu("Disk")
+  let diskMenu = nativemenu.addMenu(tr(msgMenuDisk))
 
   for drv in 0 ..< FloppyDrives:
     let fd = diskMenu.addSubmenu("FD" & $drv)
-    fd.addItem("Insert…", makeInsertAction(drv), key = $(drv + 1))
-    fd.addItem("Eject", makeEjectAction(drv))
-    fd.addItem("Insert Blank 2D Disk…", makeBlankAction(drv, 0))
-    fd.addItem("Insert Blank 2DD Disk…", makeBlankAction(drv, 1))
-    fd.addItem("Insert Blank 2HD Disk…", makeBlankAction(drv, 2))
+    fd.addItem(tr(msgInsertDots), makeInsertAction(drv), key = $(drv + 1))
+    fd.addItem(tr(msgEject), makeEjectAction(drv))
+    # The medium names are the same words in every language, so they are a
+    # parameter of one message rather than three messages of their own.
+    for mediaType, medium in ["2D", "2DD", "2HD"]:
+      fd.addItem(trf(msgInsertBlankDisk, medium), makeBlankAction(drv, mediaType))
     fd.addSeparator()
-    writeProtectItems[drv] = fd.addItem("Write Protected")
-    let correctTiming = fd.addItem("Correct Timing")
-    let ignoreCrc = fd.addItem("Ignore CRC Errors")
+    writeProtectItems[drv] = fd.addItem(tr(msgWriteProtected))
+    let correctTiming = fd.addItem(tr(msgCorrectTiming))
+    let ignoreCrc = fd.addItem(tr(msgIgnoreCrcErrors))
     # Self-toggling check items: their closures refer to the item itself,
     # which does not exist while addItem is running, so the action is
     # attached afterwards - and it has to be built by a proc call rather
@@ -1174,8 +1181,8 @@ proc main() =
   # submenu rather than an item in FD0's, so that nothing under FD<n> ever
   # acts on the other drive.
   let bothMenu = diskMenu.addSubmenu("FD0 & FD1")
-  bothMenu.addItem("Insert…", insertBothAction(), key = "3")
-  bothMenu.addItem("Eject", proc () =
+  bothMenu.addItem(tr(msgInsertDots), insertBothAction(), key = "3")
+  bothMenu.addItem(tr(msgEject), proc () =
     for drv in 0 ..< FloppyDrives:
       ejectFloppy(drv))
 
@@ -1184,13 +1191,13 @@ proc main() =
   # names a title (an archive or playlist as often as a bare image), which
   # is not a per-drive thing. Its own recent.txt, since the core's
   # config_t.recent_*_path fields are never populated by this tree.
-  let recentMenu = diskMenu.addSubmenu("Recent Files")
+  let recentMenu = diskMenu.addSubmenu(tr(msgRecentFiles))
   for i in 0 ..< RecentSlots:
     recentItems[i] = recentMenu.addItem("", makeRecentAction(i))
-  recentNoneItem = recentMenu.addItem("None")
+  recentNoneItem = recentMenu.addItem(tr(msgRecentNone))
   recentNoneItem.enabled = false
   recentMenu.addSeparator()
-  recentMenu.addItem("Clear Recent Files", proc () =
+  recentMenu.addItem(tr(msgClearRecentFiles), proc () =
     recent = @[]
     refreshRecentMenu())
 
@@ -1220,7 +1227,7 @@ proc main() =
   # A small helper covers the four radio groups below. Written as a proc
   # taking the values it needs rather than inline in each loop, for the
   # closure-binding reason documented at makeToggleAction above.
-  let deviceMenu = nativemenu.addMenu("Device")
+  let deviceMenu = nativemenu.addMenu(tr(msgMenuDevice))
 
   proc addRadioGroup(menu: nativemenu.Menu, labels: seq[string], values: seq[int],
                      current: int, apply: proc (value: cint) {.closure.}) =
@@ -1240,12 +1247,12 @@ proc main() =
       group[i] = menu.addItem(labels[i], makeAction(i))
       group[i].checked = (values[i] == current)
 
-  let keyboardMenu = deviceMenu.addSubmenu("Keyboard")
+  let keyboardMenu = deviceMenu.addSubmenu(tr(msgKeyboard))
   keyboardMenu.addRadioGroup(
-    @["Keyboard Mode A", "Keyboard Mode B"], @[0, 1], bx1GetKeyboardType(h).int,
+    @[tr(msgKeyboardModeA), tr(msgKeyboardModeB)], @[0, 1], bx1GetKeyboardType(h).int,
     proc (v: cint) = bx1SetKeyboardType(h, v))
 
-  let soundMenu = deviceMenu.addSubmenu("Sound")
+  let soundMenu = deviceMenu.addSubmenu(tr(msgSound))
   # The OPM boards are added by VM's constructor, which copies
   # config.sound_type into a member once (x1.cpp:76) and never rereads it,
   # so a change here cannot reach the machine that is running. It reaches
@@ -1262,9 +1269,7 @@ proc main() =
     proc (v: cint) =
       bx1SetSoundType(h, v)
       if v.int != vmSoundType():
-        filedialog.message("Sound Board",
-          "The sound board is chosen while the machine is being built, so " &
-          "this takes effect at the next reset (Control > Reset)."))
+        filedialog.message(tr(msgSoundBoardTitle), tr(msgSoundBoardBody)))
   soundMenu.addSeparator()
   # The drive noise the machine mixes in alongside the synthesized
   # channels, played from WAVs this app generates at startup rather than
@@ -1283,18 +1288,18 @@ proc main() =
     item.setAction(proc () =
       item.checked = not item.checked
       set(item.checked.cint))
-  soundMenu.addToggle("Play FDD Noise",
+  soundMenu.addToggle(tr(msgPlayFddNoise),
     proc (): bool = bx1GetSoundNoiseFdd(h) != 0, proc (on: cint) = bx1SetSoundNoiseFdd(h, on))
 
-  let displayMenu = deviceMenu.addSubmenu("Display")
+  let displayMenu = deviceMenu.addSubmenu(tr(msgDisplay))
   # "High Resolution" (0) has a genuine glyph rendering fault that the
   # original Windows build shows too, so it is not the default here; see
   # bx1_create and DevelopmentPlan phase 5.
   displayMenu.addRadioGroup(
-    @["High Resolution", "Standard"], @[0, 1], bx1GetMonitorType(h).int,
+    @[tr(msgHighResolution), tr(msgStandard)], @[0, 1], bx1GetMonitorType(h).int,
     proc (v: cint) = bx1SetMonitorType(h, v))
   displayMenu.addSeparator()
-  displayMenu.addToggle("Scanline",
+  displayMenu.addToggle(tr(msgScanline),
     proc (): bool = bx1GetScanLine(h) != 0, proc (on: cint) = bx1SetScanLine(h, on))
 
   # --- Volume window (Host > Volume) ---
@@ -1338,7 +1343,7 @@ proc main() =
   # skipped simply leave a nil entry nothing ever touches.
   var volumeL = newSeq[Slider](volumeCount)
   var volumeR = newSeq[Slider](volumeCount)
-  let volumeWin = newWindow("Volume", 1, 1, false)
+  let volumeWin = newWindow(tr(msgVolume), 1, 1, false)
   volumeWin.margined = true
   # Nothing here reads better wider, and dragging the panel smaller than the
   # rows need puts them back on top of each other - libui-ng lets a group
@@ -1420,7 +1425,7 @@ proc main() =
           volumeL[dev].setLevel(level)
       storeVolume(dev)
   # Above the devices, since it acts on all of them.
-  let masterGroup = newGroup("Master", true)
+  let masterGroup = newGroup(tr(msgVolumeMaster), true)
   let masterRows = newVerticalBox(true)
   let masterRow = newHorizontalBox(true)
   let masterSlider = newSlider(-40 .. 0, proc (sender: Slider) =
@@ -1466,7 +1471,7 @@ proc main() =
   # brings every R up to its L there and then, rather than waiting for each
   # to be dragged: a panel that says the channels are linked while showing
   # rows where they visibly are not is the confusing half of both worlds.
-  let linkBox = newCheckbox("Link L/R", proc (sender: Checkbox) =
+  let linkBox = newCheckbox(tr(msgVolumeLinkLR), proc (sender: Checkbox) =
     volumeLinked = sender.checked
     if volumeLinked:
       equalizeChannels())
@@ -1477,7 +1482,7 @@ proc main() =
   # own default, and the master with it. Applied straight away because this
   # panel has no OK to apply it at - it edits the running machine live,
   # where the original edited a copy and committed it on OK.
-  volumeBar.add(newButton("Reset", proc (sender: Button) =
+  volumeBar.add(newButton(tr(msgReset), proc (sender: Button) =
     volumeMaster = 0
     masterSlider.setLevel(0)
     for i in volumeDevices:
@@ -1601,25 +1606,25 @@ proc main() =
   # group: SDL does have a vsync present (SDL_RENDERER_PRESENTVSYNC), but
   # blocking on the display's 60Hz would fight the wall-clock 61.94Hz
   # pacing the draw loop below runs on.
-  let hostMenu = nativemenu.addMenu("Host")
+  let hostMenu = nativemenu.addMenu(tr(msgMenuHost))
 
   # Rec Sound / Stop / Capture Screen. The original routes these through its
   # OSD; this port's OSD has them as empty stubs and the core is not to be
   # modified, so they are done from the host's own copies of the same data -
   # see capture.nim.
   var recSoundItem, recStopItem: MenuItemRef
-  recSoundItem = hostMenu.addItem("Rec Sound", proc () =
+  recSoundItem = hostMenu.addItem(tr(msgRecSound), proc () =
     # The lock keeps the audio thread out of feedSound while the file is
     # being created underneath it.
     lockAudioDevice(audioDev)
     let path = capture.startSoundRecording(soundRate)
     unlockAudioDevice(audioDev)
     if path.len == 0:
-      filedialog.message("Rec Sound",
-        "Could not start recording in " & paths.recordingsDir() & ".")
+      filedialog.message(tr(msgRecSound),
+        trf(msgRecSoundFailed, paths.recordingsDir()))
     recSoundItem.enabled = not capture.isSoundRecording()
     recStopItem.enabled = capture.isSoundRecording())
-  recStopItem = hostMenu.addItem("Stop", proc () =
+  recStopItem = hostMenu.addItem(tr(msgRecStop), proc () =
     lockAudioDevice(audioDev)
     capture.stopSoundRecording(soundRate)
     unlockAudioDevice(audioDev)
@@ -1629,16 +1634,16 @@ proc main() =
   # opens; here the two items keep each other in step, and the status timer
   # re-syncs them in case a write error stopped the recording on its own.
   recStopItem.enabled = false
-  hostMenu.addItem("Capture Screen", proc () =
+  hostMenu.addItem(tr(msgCaptureScreen), proc () =
     # The core's framebuffer, i.e. the guest's own picture: no status bar,
     # no window scaling, whatever the window happens to look like.
     if capture.saveScreenshot(bx1GetFramebuffer(h), ScreenWidth, ScreenHeight).len == 0:
-      filedialog.message("Capture Screen",
-        "Could not write a screenshot to " & paths.screenshotsDir() & "."))
+      filedialog.message(tr(msgCaptureScreen),
+        trf(msgCaptureScreenFailed, paths.screenshotsDir())))
   hostMenu.addSeparator()
 
   # --- Host > Screen ---
-  let screenMenu = hostMenu.addSubmenu("Screen")
+  let screenMenu = hostMenu.addSubmenu(tr(msgScreen))
   var windowItems: seq[MenuItemRef]
   var fullscreenItem: MenuItemRef
 
@@ -1671,7 +1676,8 @@ proc main() =
         syncScreenItems()
 
   for n in 1 .. maxWindowScale():
-    windowItems.add screenMenu.addItem("Window x" & $n, makeWindowScaleAction(n))
+    windowItems.add screenMenu.addItem(trf(msgWindowScale, n),
+      makeWindowScaleAction(n))
   # The original lists one item per display mode it enumerated
   # ("Fullscreen 640x400" and so on) because entering fullscreen there
   # changes the display's resolution. On macOS that is not how fullscreen
@@ -1682,7 +1688,7 @@ proc main() =
   # push the pointer at the top of the screen. Ctrl-Cmd-F is what macOS uses
   # for Enter/Exit Full Screen everywhere else - not the original's
   # Alt+Enter, since Option is the X1's GRAPH key here (keymap.nim).
-  fullscreenItem = screenMenu.addItem("Fullscreen",
+  fullscreenItem = screenMenu.addItem(tr(msgFullscreen),
     proc () = applyFullscreen(not isFullscreen),
     key = "f", mods = ModCommand or ModControl)
   syncScreenItems()
@@ -1692,8 +1698,8 @@ proc main() =
   # dimensions ("Window: Aspect Ratio %d:%d", winmain.cpp:2076-2080); same
   # here, from the values the bridge reports.
   screenMenu.addRadioGroup(
-    @[&"Window: Aspect Ratio {ScreenWidth}:{ScreenHeight}",
-      &"Window: Aspect Ratio {ScreenWidth}:{aspectHeight}"],
+    @[trf(msgWindowAspect, ScreenWidth, ScreenHeight),
+      trf(msgWindowAspect, ScreenWidth, aspectHeight)],
     @[0, 1], stretchType,
     proc (v: cint) =
       stretchType = v.int
@@ -1702,17 +1708,17 @@ proc main() =
 
   screenMenu.addSeparator()
   screenMenu.addRadioGroup(
-    @["Fullscreen: Dot By Dot",
-      &"Fullscreen: Stretch (Aspect Ratio {ScreenWidth}:{ScreenHeight})",
-      &"Fullscreen: Stretch (Aspect Ratio {ScreenWidth}:{aspectHeight})",
-      "Fullscreen: Stretch (Fill)"],
+    @[tr(msgFullscreenDotByDot),
+      trf(msgFullscreenStretchAspect, ScreenWidth, ScreenHeight),
+      trf(msgFullscreenStretchAspect, ScreenWidth, aspectHeight),
+      tr(msgFullscreenStretchFill)],
     @[0, 1, 2, 3], fullscreenStretch,
     proc (v: cint) =
       fullscreenStretch = v.int
       bx1SetFullscreenStretchType(h, v))
 
   # --- Host > Sound ---
-  let hostSoundMenu = hostMenu.addSubmenu("Sound")
+  let hostSoundMenu = hostMenu.addSubmenu(tr(msgSound))
   # Sample rate and latency are stored and take effect at the next launch.
   # That is not a shortcoming of this port: EMU reads both in its
   # constructor to size the buffer create_sound() fills and never again
@@ -1737,25 +1743,69 @@ proc main() =
   # This one is live: the VM's event scheduler reads it on every mix
   # (vm/event.cpp:502).
   hostSoundMenu.addRadioGroup(
-    @["Realtime Mix", "Light Weight Mix"], @[1, 0],
+    @[tr(msgRealtimeMix), tr(msgLightWeightMix)], @[1, 0],
     bx1GetSoundStrictRendering(h).int,
     proc (v: cint) = bx1SetSoundStrictRendering(h, v))
   hostSoundMenu.addSeparator()
   # Where the original keeps it: ID_SOUND_VOLUME is inside POPUP "Sound".
-  hostSoundMenu.addItem("Volume", proc () = showVolumeWindow())
+  hostSoundMenu.addItem(tr(msgVolume), proc () = showVolumeWindow())
 
   hostMenu.addSeparator()
-  let statusBarItem = hostMenu.addItem("Show Status Bar")
+  let statusBarItem = hostMenu.addItem(tr(msgShowStatusBar))
   statusBarItem.checked = showStatusBar
   statusBarItem.setAction(proc () =
     statusBarItem.checked = not statusBarItem.checked
     showStatusBar = statusBarItem.checked
     applyWindowLayout())
 
+  # --- Host > Language ---
+  # The UI language, which the app normally takes from the host (see
+  # i18n.nim). This is the override, for the case the host's language and
+  # the one the user wants to read software in are not the same - a common
+  # enough combination that leaving it to a hand-edited settings file would
+  # be leaving it unreachable.
+  #
+  # It stores a preference and says so: every menu title was read out of the
+  # catalog while the menu bar was being built, and nothing rebuilds it, so
+  # a language switched here arrives at the next launch. Retitling every
+  # item in place is possible (nativemenu keeps a handle on each) but would
+  # have to be kept in step with every future menu by hand.
+  let languageMenu = hostMenu.addSubmenu(tr(msgLanguage))
+  languageMenu.addRadioGroup(
+    @[tr(msgLanguageAuto), tr(msgLanguageEnglish), tr(msgLanguageJapanese)],
+    @[0, 1, 2],
+    (case uiLanguage.toLowerAscii()
+     of "en": 1
+     of "ja": 2
+     else: 0),
+    proc (v: cint) =
+      let chosen = (case v
+                    of 1: "en"
+                    of 2: "ja"
+                    else: "auto")
+      if chosen != uiLanguage:
+        uiLanguage = chosen
+        filedialog.message(tr(msgLanguageChangedTitle), tr(msgLanguageChangedBody)))
+
   # libui-ng attaches no keyboard shortcuts to any menu item (phase 1.2);
   # wire up the standard macOS ones by hand. Must happen after win.show()
   # - NSApp has no main menu before that.
   discard cocoamenu.setMenuShortcut("", "Quit", "q")
+  # libui-ng writes the application menu's six standard items itself, in
+  # English literals, and offers no way to title them (its darwin/menu.m).
+  # They are renamed here instead, matched on the prefix libui put there -
+  # which nothing else changes. Applied in every language: the English
+  # column of the catalog holds exactly what libui already wrote, so this
+  # is one code path rather than a translated special case. "Hide Others"
+  # goes first only so its prefix cannot be read as part of "Hide <app>".
+  const AppName = "BubiX1turboZ"
+  discard cocoamenu.setMenuItemTitle("", "About", trf(msgAppMenuAbout, AppName))
+  discard cocoamenu.setMenuItemTitle("", "Services", tr(msgAppMenuServices))
+  discard cocoamenu.setMenuItemTitle("", "Hide Others", tr(msgAppMenuHideOthers))
+  discard cocoamenu.setMenuItemTitle("", "Hide " & AppName,
+    trf(msgAppMenuHide, AppName))
+  discard cocoamenu.setMenuItemTitle("", "Show All", tr(msgAppMenuShowAll))
+  discard cocoamenu.setMenuItemTitle("", "Quit", trf(msgAppMenuQuit, AppName))
 
   # Nearest-neighbor scaling: X1 text/graphics are drawn at exact pixel
   # boundaries, and linear filtering (SDL's default for the accelerated
@@ -1784,7 +1834,9 @@ proc main() =
   # SDL_CreateWindow and SDL_CreateRenderer, i.e. while the view has no
   # renderer backing it yet - which is exactly the state the crash above
   # happens in.
-  sdlWin = createWindow("BubiX1turboZ - Screen", SDL_WINDOWPOS_UNDEFINED,
+  # The application's name alone: this is the only window the user works
+  # in, so naming what it shows would only repeat what the app is.
+  sdlWin = createWindow("BubiX1turboZ", SDL_WINDOWPOS_UNDEFINED,
     SDL_WINDOWPOS_UNDEFINED, (ScreenWidth * windowScale).cint,
     (guestHeight() * windowScale).cint + statusBarHeight(), SDL_WINDOW_HIDDEN)
   if sdlWin == nil:
@@ -2119,6 +2171,9 @@ proc main() =
   bx1SaveConfig(h, paths.configFilePath().cstring)
   recentfiles.save(paths.recentFilesPath(), recent)
   hostCfg.setBool("ShowStatusBar", showStatusBar)
+  # "auto", "en" or "ja" - read back at the very start of the next launch,
+  # before anything can put a word on screen.
+  hostCfg.setStr("UILanguage", uiLanguage)
   # The per-device levels live in the core's own config.ini; these two are
   # this port's additions and have nowhere to go there.
   hostCfg.setInt("VolumeMaster", volumeMaster)

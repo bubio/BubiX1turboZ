@@ -58,6 +58,23 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources" "$CONTENTS/Frameworks"
 ditto build/frameworks/SDL2.framework "$CONTENTS/Frameworks/SDL2.framework"
 cp assets/$APP_NAME.icns "$CONTENTS/Resources/$APP_NAME.icns"
 
+# The app's own strings come from its Nim catalog (src/nim/bubix1/i18n.nim),
+# but the words AppKit supplies - the Open/Save panel buttons, the standard
+# window and edit menus, "Are you sure you want to..." - are drawn in the
+# first language the *bundle* claims to have. A CFBundleLocalizations entry
+# alone is not enough: AppKit looks for the matching .lproj resource
+# directory, and a bundle without one stays English however its plist reads.
+# The directories carry only an empty InfoPlist.strings, which is all it
+# takes for the localization to count as present (nothing in Info.plist
+# needs translating - the app's name is the same in both languages).
+for LANG_CODE in en ja; do
+  mkdir -p "$CONTENTS/Resources/$LANG_CODE.lproj"
+  cat > "$CONTENTS/Resources/$LANG_CODE.lproj/InfoPlist.strings" <<'STRINGS'
+/* No Info.plist key needs translating; this file marks the localization
+   as present so AppKit uses its own strings in this language. */
+STRINGS
+done
+
 # The app's tint colour. macOS takes it from a compiled asset catalog named
 # by NSAccentColorName and nowhere else - there is no API to set one at run
 # time - so it is the asset catalog or nothing. Every standard control
@@ -104,6 +121,11 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>ja</string>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>$APP_NAME</string>
 	<key>CFBundleIconFile</key>

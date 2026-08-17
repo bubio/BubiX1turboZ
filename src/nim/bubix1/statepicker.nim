@@ -6,6 +6,7 @@
 ## side and docs/dev/SaveState.md section 9.
 
 import std/os
+import ./i18n
 
 {.compile: "statepicker.m".}
 # statepicker.h is included by the generated C as well as by the .m file,
@@ -31,7 +32,8 @@ type
     pngLen {.importc: "png_len".}: cint
     enabled: cint
 
-proc bx1StatePicker(title: cstring, slots: ptr CSlot, count: cint): cint
+proc bx1StatePicker(title: cstring, slots: ptr CSlot, count: cint,
+                    cancelLabel, emptyLabel: cstring): cint
   {.importc: "bx1_state_picker", header: "statepicker.h", cdecl.}
 
 proc choose*(title: string, cells: seq[SlotCell]): int =
@@ -57,4 +59,9 @@ proc choose*(title: string, cells: seq[SlotCell]): int =
       png: if cell.thumbnail.len > 0: unsafeAddr cells[i].thumbnail[0] else: nil,
       pngLen: cell.thumbnail.len.cint,
       enabled: cell.enabled.cint)
-  bx1StatePicker(title.cstring, addr raw[0], cells.len.cint).int
+  # The two words the dialog draws for itself, rather than takes from a
+  # slot: kept alive here for the same reason as the strings above.
+  let cancel = tr(msgButtonCancel)
+  let empty = tr(msgSlotEmpty)
+  bx1StatePicker(title.cstring, addr raw[0], cells.len.cint,
+                 cancel.cstring, empty.cstring).int

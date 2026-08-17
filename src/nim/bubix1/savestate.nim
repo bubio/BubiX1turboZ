@@ -14,6 +14,7 @@
 
 import std/[json, options, os, streams, times, unicode]
 import deflate
+import ./i18n
 
 const
   Magic* = 0x53315842'u32       ## "BX1S", little endian
@@ -242,7 +243,7 @@ proc save*(path, vmBlobPath: string, meta: StateMeta, thumbnail: seq[byte] = @[]
   let tmp = path & ".tmp"
   var s = newFileStream(tmp, fmWrite)
   if s == nil:
-    raise newException(IOError, "cannot write " & tmp)
+    raise newException(IOError, trf(msgStateCannotWrite, tmp))
   try:
     s.write Magic
     s.write FormatVersion
@@ -277,18 +278,17 @@ proc readSections(s: Stream, path: string): seq[Section] =
   ## message fit to show the user - every rejection here means the file is
   ## not one of ours, or not one this build understands.
   if s.readUint32() != Magic:
-    raise newException(IOError, path.extractFilename & " is not a BubiX1turboZ save state")
+    raise newException(IOError, trf(msgStateNotOurs, path.extractFilename))
   let version = s.readUint16()
   if version > FormatVersion:
-    raise newException(IOError,
-      "save state was written by a newer version of BubiX1turboZ")
+    raise newException(IOError, tr(msgStateNewerVersion))
   let compression = s.readUint16()
   if compression != CompressNone and compression != CompressDeflate:
-    raise newException(IOError, "save state uses an unknown compression method")
+    raise newException(IOError, tr(msgStateUnknownCompression))
   s.setPosition 0x3c
   let count = s.readUint32().int
   if count <= 0 or count > 64:
-    raise newException(IOError, "save state has a damaged section table")
+    raise newException(IOError, tr(msgStateDamagedTable))
   s.setPosition HeaderSize
   for _ in 0 ..< count:
     var sec: Section
@@ -308,7 +308,7 @@ proc payload(s: Stream, sec: Section): seq[byte] =
   s.setPosition sec.offset
   var stored = newSeq[byte](sec.stored)
   if sec.stored > 0 and s.readData(addr stored[0], sec.stored) != sec.stored:
-    raise newException(IOError, "save state is truncated")
+    raise newException(IOError, tr(msgStateTruncated))
   if sec.stored == sec.raw: stored else: deflate.uncompress(stored, sec.raw)
 
 proc readInfo*(path: string): StateInfo =
@@ -316,12 +316,12 @@ proc readInfo*(path: string): StateInfo =
   ## cheap enough to call for every slot when a menu opens.
   var s = newFileStream(path, fmRead)
   if s == nil:
-    raise newException(IOError, "cannot read " & path)
+    raise newException(IOError, trf(msgStateCannotRead, path))
   try:
     let sections = readSections(s, path)
     let meta = sections.find(TagMeta)
     if meta.isNone:
-      raise newException(IOError, "save state has no metadata")
+      raise newException(IOError, tr(msgStateNoMetadata))
     result.meta = fromJson(parseJson(toStr(s.payload(meta.get))))
     result.hasThumbnail = sections.find(TagThumb).isSome
   finally:
@@ -331,11 +331,11 @@ proc extractVm*(path, destPath: string) =
   ## Writes the decompressed VM blob where `bx1_vm_state_load` can read it.
   var s = newFileStream(path, fmRead)
   if s == nil:
-    raise newException(IOError, "cannot read " & path)
+    raise newException(IOError, trf(msgStateCannotRead, path))
   try:
     let vm = readSections(s, path).find(TagVm)
     if vm.isNone:
-      raise newException(IOError, "save state has no machine state")
+      raise newException(IOError, tr(msgStateNoMachineState))
     writeFile(destPath, toStr(s.payload(vm.get)))
   finally:
     s.close()
@@ -354,7 +354,10 @@ proc readThumbnail*(path: string): seq[byte] =
 
 proc describe*(info: StateInfo): string =
   ## One-line caption for the quick save: when it was taken and what was in
-  ## the drives, in Bubilator88's `quickSaveInfo` shape.
-  result = info.meta.savedAt.fromUnix().local().format("MM/dd HH:mm")
-  if info.meta.title.len > 0:
-    result &= " — " & info.meta.title
+  ## the drives, in Bubilator88's `quickSaveInfo` shape. Both the date
+  ## pattern and the way the two halves are joined come from the catalog:
+  ## neither is the same in every language.
+  let stamp = info.meta.savedAt.fromUnix().local().format(tr(msgStateDateFormat))
+  result =
+    if info.meta.title.len > 0: trf(msgStateCaption, stamp, info.meta.title)
+    else: stamp

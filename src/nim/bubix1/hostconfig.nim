@@ -65,3 +65,10 @@ proc getInt*(cfg: HostConfig, key: string, fallback: int): int =
 
 proc setInt*(cfg: var HostConfig, key: string, value: int) =
   cfg.values[key] = $value
+
+proc getStr*(cfg: HostConfig, key: string, fallback: string): string =
+  let raw = cfg.values.getOrDefault(key, "")
+  if raw.len == 0: fallback else: raw
+
+proc setStr*(cfg: var HostConfig, key: string, value: string) =
+  cfg.values[key] = value

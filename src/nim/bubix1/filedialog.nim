@@ -1,6 +1,12 @@
 ## Native open/save panels and alerts, replacing uing's - which open as a
 ## sheet on whichever uiWindow they are given, and this app's only uiWindow
 ## is a placeholder libui requires for the menu bar. See filedialog.m.
+##
+## The AppKit side draws no words of its own: every button title is passed
+## down from the catalog here, so the GTK and Win32 backends this will grow
+## inherit the same translations (see i18n.nim).
+
+import ./i18n
 
 {.compile: "filedialog.m".}
 {.passL: "-framework Cocoa".}
@@ -10,10 +16,12 @@ proc bx1DialogOpenFile(extensions: cstring): cstring
 proc bx1DialogSaveFile(extensions, suggestedName: cstring): cstring
   {.importc: "bx1_dialog_save_file", cdecl.}
 proc bx1DialogFree(text: cstring) {.importc: "bx1_dialog_free", cdecl.}
-proc bx1DialogMessage(title, body: cstring) {.importc: "bx1_dialog_message", cdecl.}
-proc bx1DialogMissingRom(title, body, folder: cstring): cint
+proc bx1DialogMessage(title, body, okLabel: cstring)
+  {.importc: "bx1_dialog_message", cdecl.}
+proc bx1DialogMissingRom(title, body, folder, openLabel, quitLabel: cstring): cint
   {.importc: "bx1_dialog_missing_rom", cdecl.}
-proc bx1DialogChooseDisk(title: cstring, rows: cstringArray, count, initial: cint): cint
+proc bx1DialogChooseDisk(title: cstring, rows: cstringArray, count, initial: cint,
+                         insertLabel, cancelLabel: cstring): cint
   {.importc: "bx1_dialog_choose_disk", cdecl.}
 
 const
@@ -41,12 +49,16 @@ proc saveFile*(extensions = "", suggestedName = ""): string =
   takeString(bx1DialogSaveFile(extensions.cstring, suggestedName.cstring))
 
 proc message*(title, body: string) =
-  bx1DialogMessage(title.cstring, body.cstring)
+  let ok = tr(msgButtonOk)
+  bx1DialogMessage(title.cstring, body.cstring, ok.cstring)
 
 proc missingRom*(title, body, folder: string): bool {.discardable.} =
   ## Startup alert for a ROM folder with no BIOS ROM in it, offering to
   ## reveal `folder` in the Finder. True if the folder was revealed.
-  bx1DialogMissingRom(title.cstring, body.cstring, folder.cstring) != 0
+  let open = tr(msgButtonOpenRomFolder)
+  let quitLabel = tr(msgButtonQuit)
+  bx1DialogMissingRom(title.cstring, body.cstring, folder.cstring,
+                      open.cstring, quitLabel.cstring) != 0
 
 proc chooseDisk*(title: string, rows: openArray[string], initial = 0): int =
   ## Asks which disk of a multi-disk image to insert. Returns -1 if the user
@@ -55,5 +67,8 @@ proc chooseDisk*(title: string, rows: openArray[string], initial = 0): int =
   if rows.len == 0:
     return -1
   var raw = allocCStringArray(rows)
-  result = bx1DialogChooseDisk(title.cstring, raw, rows.len.cint, initial.cint).int
+  let insert = tr(msgButtonInsert)
+  let cancel = tr(msgButtonCancel)
+  result = bx1DialogChooseDisk(title.cstring, raw, rows.len.cint, initial.cint,
+                               insert.cstring, cancel.cstring).int
   deallocCStringArray(raw)

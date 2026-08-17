@@ -22,8 +22,12 @@ typedef struct {
 } bx1_state_slot;
 
 /// Runs the picker app-modally. Returns the chosen index, or -1 if the
-/// user cancelled.
-int bx1_state_picker(const char *title, const bx1_state_slot *slots, int count);
+/// user cancelled. `cancel_label` and `empty_label` are the only words this
+/// dialog draws that do not come from the slots themselves; they are passed
+/// in rather than written here so the app keeps one string catalog for
+/// every platform backend (see src/nim/bubix1/i18n.nim).
+int bx1_state_picker(const char *title, const bx1_state_slot *slots, int count,
+                     const char *cancel_label, const char *empty_label);
 
 #ifdef __cplusplus
 }

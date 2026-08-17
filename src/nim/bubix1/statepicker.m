@@ -86,7 +86,7 @@ static NSDictionary *text_attributes(CGFloat size, BOOL bold, CGFloat alpha)
 	Doing it here rather than with layered views keeps each cell a plain
 	NSButton, which is what makes the grid below as simple as it is.
 */
-static NSImage *cell_image(const bx1_state_slot *slot)
+static NSImage *cell_image(const bx1_state_slot *slot, NSString *empty_label)
 {
 	NSImage *image;
 	NSImage *thumbnail = nil;
@@ -119,12 +119,11 @@ static NSImage *cell_image(const bx1_state_slot *slot)
 	} else {
 		[[NSColor colorWithWhite:0.0 alpha:0.7] setFill];
 		NSRectFill(bounds);
-		NSString *empty = @"Empty";
 		NSDictionary *attrs = text_attributes(15.0, NO, 0.3);
-		NSSize size = [empty sizeWithAttributes:attrs];
-		[empty drawAtPoint:NSMakePoint((CellWidth - size.width) / 2.0,
-		                               (CellHeight - size.height) / 2.0)
-		    withAttributes:attrs];
+		NSSize size = [empty_label sizeWithAttributes:attrs];
+		[empty_label drawAtPoint:NSMakePoint((CellWidth - size.width) / 2.0,
+		                                     (CellHeight - size.height) / 2.0)
+		          withAttributes:attrs];
 	}
 
 	[[NSColor colorWithWhite:0.0 alpha:0.55] setFill];
@@ -203,9 +202,11 @@ static NSTextField *heading(NSRect frame, NSString *text)
 	/ stopModal), the one this app has verified does not leave the menu bar
 	disabled behind it.
 */
-int bx1_state_picker(const char *title, const bx1_state_slot *slots, int count)
+int bx1_state_picker(const char *title, const bx1_state_slot *slots, int count,
+                     const char *cancel_label, const char *empty_label)
 {
 	@autoreleasepool {
+		NSString *empty = bx1_ns_string(empty_label);
 		NSWindow *window;
 		NSView *root;
 		Bx1StatePickerTarget *target;
@@ -243,7 +244,7 @@ int bx1_state_picker(const char *title, const bx1_state_slot *slots, int count)
 				           CellWidth, CellHeight)] autorelease];
 			[button setBordered:NO];
 			[button setImagePosition:NSImageOnly];
-			[button setImage:cell_image(&slots[i])];
+			[button setImage:cell_image(&slots[i], empty)];
 			[button setTag:i];
 			[button setTarget:target];
 			[button setAction:@selector(pick:)];
@@ -267,7 +268,7 @@ int bx1_state_picker(const char *title, const bx1_state_slot *slots, int count)
 			           (FooterHeight - CancelHeight) / 2.0,
 			           CancelWidth, CancelHeight)] autorelease];
 		[cancel setBezelStyle:NSBezelStyleRounded];
-		[cancel setTitle:@"Cancel"];
+		[cancel setTitle:bx1_ns_string(cancel_label)];
 		[cancel setKeyEquivalent:@"\033"];
 		[cancel setTarget:target];
 		[cancel setAction:@selector(cancel:)];
