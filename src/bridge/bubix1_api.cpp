@@ -714,11 +714,24 @@ void bx1_start_auto_key(bx1_handle h, const char* text)
 	// (Trace U+3042 = E3 81 82: 0xE3 skips 0x81, then 0x82 is itself in the
 	// lead-byte range and skips the *next* character's first byte.) The host
 	// clipboard is UTF-8, so filter here, matching bx1_key_char's caller.
+	//
+	// Line endings are normalized to a single CR on the way in. The core
+	// takes CR for Return and drops LF as the second half of a CRLF pair
+	// (emu.cpp, set_auto_key_list()), which suits the Windows clipboard but
+	// not NSPasteboard's LF-only text - left alone, every newline would
+	// vanish and the whole paste would arrive as one line. The pause the
+	// core takes after each line also hangs off that CR.
 	int len = (int)strlen(text);
 	char* buf = new char[len + 1];
 	int n = 0;
 	for(int i = 0; i < len; i++) {
-		if((unsigned char)text[i] < 0x80) {
+		unsigned char c = (unsigned char)text[i];
+		if(c == '\r' || c == '\n') {
+			buf[n++] = '\r';
+			if(c == '\r' && text[i + 1] == '\n') {
+				i++;	// CRLF is one line ending, not two
+			}
+		} else if(c < 0x80) {
 			buf[n++] = text[i];
 		}
 	}
