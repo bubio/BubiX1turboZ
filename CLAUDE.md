@@ -4,16 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## リポジトリの現状
 
-**フェーズ 7（アーカイブ・ドラッグ＆ドロップ対応）まで完了。次はフェーズ 8（実ゲームによる検証）。** `src/`・`.nimble` とも存在し、ビルドは以下のスクリプトで行う:
+**フェーズ 7（アーカイブ・ドラッグ＆ドロップ対応）とフェーズ 9（`.app` バンドル・dmg・CI）まで完了。残るのはフェーズ 8（実ゲームによる検証）とフェーズ 10（ドキュメントと 0.1.0 リリース）。** `src/`・`.nimble` とも存在し、ビルドは以下のスクリプトで行う:
 
 - `scripts/build_core.sh [vm|app|osd|bridge|all]` — 静的ライブラリ `build/libbubix1core.a`（vendored C++ コア + OSD + bridge）をビルド
-- `scripts/build_app_macos_dev.sh` — `build/libbubix1core.a` を前提に Nim アプリを `build/BubiX1turboZ` としてビルド（開発用。フェーズ 9 の `.app`/`.dmg` パッケージングはまだ無い）
+- `scripts/fetch_sdl2_framework.sh` — 公式配布の `SDL2.framework` を `build/frameworks` に取得（Homebrew の SDL は使わない。理由は `DevelopmentPlan.md` フェーズ 9）
+- `scripts/build_nim_app.sh <出力先> <rpath>` — Nim アプリ本体のコンパイル。下の 2 つが共有する
+- `scripts/build_app_macos_dev.sh` — 開発用。`build/BubiX1turboZ` を作る（バンドル無し）
+- `scripts/build_macos.sh [--dmg] [--skip-core]` — リリース用。`build/BubiX1turboZ.app` と dmg を作る。CI が実行するのもこれ
+- `scripts/make_icon.sh` — `assets/BubiX1turboZ.png`（原画）から `assets/BubiX1turboZ.icns` を再生成。アイコンを変えるときだけ実行（ビルドからは呼ばれない）
 
 現時点の構成:
 
 | パス | 追跡 | 内容 |
 |---|---|---|
-| `CLAUDE.md`, `mise.toml`, `.gitignore`, `LICENSE`/`license/`, `README.md`, `*.nimble`, `src/`, `scripts/`, `docs/`（`docs/dev/` を除く） | ✅ | |
+| `CLAUDE.md`, `mise.toml`, `.gitignore`, `LICENSE`/`license/`, `README.md`, `*.nimble`, `src/`, `scripts/`, `assets/`, `.github/`, `docs/`（`docs/dev/` を除く） | ✅ | |
 | `docs/dev/` | ❌ | `BluePrint.md`（仕様）と `DevelopmentPlan.md`（計画・進捗・調査結果の一次資料） |
 | `spike/` | ❌ | フェーズ 1 の検証コードと成果物（`src/` へ移設済みのものも含め、参照用にそのまま残置） |
 

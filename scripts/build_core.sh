@@ -18,6 +18,12 @@ OBJ=build/core-obj
 LOG=build/core-compile.log
 LIB=build/libbubix1core.a
 
+# Matches LSMinimumSystemVersion in the .app's Info.plist. Without it clang
+# stamps the objects with the SDK's own (current) minimum, which would make
+# the released app refuse to launch on every macOS older than the machine
+# that built it.
+export MACOSX_DEPLOYMENT_TARGET=13.5
+
 CXX=clang++
 CXXFLAGS=(
   -std=c++17 -arch arm64 -c
