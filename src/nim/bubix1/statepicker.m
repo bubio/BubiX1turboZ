@@ -7,12 +7,11 @@
 	time it was taken, and what was in the drives. This is that, in AppKit.
 
 	Built on NSAlert with an accessory view rather than as a window of its
-	own, for the reason filedialog.m gives at length: this app's only
-	uiWindow is a placeholder libui needs for the menu bar, so there is
-	nothing to hang a sheet on, and NSAlert's app-modal session is the one
-	path already proven not to leave NSApp believing a modal is still live
-	(see cocoamenu.m's bx1_menu_disable_autoenable_all for what that
-	looks like when it goes wrong).
+	own, for the reason filedialog.m gives at length: the emulator's window
+	belongs to SDL, so there is nothing of this app's own to hang a sheet
+	on, and NSAlert's app-modal session is the one path already proven not
+	to leave NSApp believing a modal is still live (see the make_menu
+	comment in nativemenu.m for what that looks like when it goes wrong).
 */
 
 #import <Cocoa/Cocoa.h>

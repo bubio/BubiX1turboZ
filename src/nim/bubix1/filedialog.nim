@@ -1,6 +1,6 @@
-## Native open/save panels and alerts, replacing uing's - which open as a
-## sheet on whichever uiWindow they are given, and this app's only uiWindow
-## is a placeholder libui requires for the menu bar. See filedialog.m.
+## Native open/save panels and alerts. They run app-modal rather than as a
+## sheet: the only window this app has is SDL's, and a panel hanging off it
+## is not where macOS puts one. See filedialog.m.
 ##
 ## The AppKit side draws no words of its own: every button title is passed
 ## down from the catalog here, so the GTK and Win32 backends this will grow

@@ -1,11 +1,11 @@
-## Menu bar construction on top of AppKit directly, for the nesting that
-## uing/libui-ng cannot express. See nativemenu.m for why this is needed.
+## Menu bar construction on top of AppKit directly. See nativemenu.m.
 ##
-## Usage: build menus after the uing window carrying the menu bar has been
-## shown (NSApp has no main menu before that), then let the main loop run.
-## Actions are ordinary Nim closures:
+## Usage: `installMenuBar` once the application object exists (SDL creates
+## it), then build the menus. Actions are ordinary Nim closures:
 ##
 ## ```nim
+## let appMenu = installMenuBar("BubiX1turboZ")
+## appMenu.addItem("About BubiX1turboZ", proc () = showAbout())
 ## let control = addMenu("Control")
 ## control.addItem("Reset", proc () = bx1Reset(h))
 ## let save = control.addSubmenu("Save State")
@@ -41,6 +41,11 @@ type
 
 proc bx1NmenuSetAction(fn: proc (tag: cint) {.cdecl.})
   {.importc: "bx1_nmenu_set_action", cdecl.}
+proc bx1NmenuInstallMenubar(appName: cstring): pointer
+  {.importc: "bx1_nmenu_install_menubar", cdecl.}
+proc bx1NmenuAddStandardItem(menu: pointer, title: cstring, which: cint,
+                             key: cstring, mods: cint)
+  {.importc: "bx1_nmenu_add_standard_item", cdecl.}
 proc bx1NmenuAddToplevel(title: cstring): pointer
   {.importc: "bx1_nmenu_add_toplevel", cdecl.}
 proc bx1NmenuAddSubmenu(parent: pointer, title: cstring): pointer
@@ -81,9 +86,28 @@ proc ensureInstalled() =
     bx1NmenuSetAction(dispatch)
     installed = true
 
+type StandardItem* = enum
+  ## The application-menu items whose behaviour is AppKit's own.
+  siServices, siHide, siHideOthers, siShowAll
+
+proc installMenuBar*(appName: string): Menu =
+  ## Replaces the application's menu bar with an empty one and returns the
+  ## application menu at the head of it. Everything else is appended after
+  ## that menu, so this has to come first.
+  ensureInstalled()
+  Menu(handle: bx1NmenuInstallMenubar(appName.cstring))
+
+proc addStandardItem*(menu: Menu, title: string, which: StandardItem,
+                      key = "", mods = ModCommand) =
+  ## Appends an item that AppKit acts on itself (Services, Hide, Show All).
+  ensureInstalled()
+  if menu.handle != nil:
+    bx1NmenuAddStandardItem(menu.handle, title.cstring, which.cint,
+                            key.cstring, mods.cint)
+
 proc addMenu*(title: string): Menu =
-  ## Appends a new top-level menu to the menu bar, after whatever
-  ## uing/libui-ng already put there (which includes the application menu).
+  ## Appends a new top-level menu to the menu bar, after the application
+  ## menu `installMenuBar` put there.
   ensureInstalled()
   Menu(handle: bx1NmenuAddToplevel(title.cstring))
 

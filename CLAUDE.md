@@ -37,7 +37,7 @@ Sharp X1 turbo Z のマルチプラットフォーム対応エミュレーター
 - **エミュレーションコア**: Common Source Code Project の eX1turboZ のコードをそのまま使用（C++）
 - **アプリケーション層**: Nim
 - **マルチメディア**: SDL2
-- **GUI**: uing (https://github.com/neroist/uing)
+- **GUI**: プラットフォームのネイティブ API を直接使用（macOS は AppKit）。クロスプラットフォームの GUI ライブラリは使わない
 - **ライセンス**: eX1turboZ と同じ
 
 つまり構造は「C++ のエミュレーションコア + Nim のアプリケーション層」の二層で、両者を FFI で接続する形になります。コアには手を入れず、上位層で吸収するのが基本方針です。

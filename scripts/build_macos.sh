@@ -107,13 +107,15 @@ else
        "building without the app's accent colour" >&2
 fi
 
-# CFBundleDocumentTypes is deliberately absent. Opening a document from the
-# Finder arrives as an Apple Event handled by the application delegate, and
-# in this app libui owns NSApp and its delegate (uing.init() must run before
-# sdl2.init() - see the header of src/nim/bubix1turboz.nim), so SDL never
-# turns it into the SDL_DROPFILE the app listens for. Advertising file
-# associations that then do nothing would be worse than claiming none;
-# dragging a file onto the running window works and remains the way in.
+# CFBundleDocumentTypes is deliberately absent, for now. Opening a document
+# from the Finder arrives as an Apple Event handled by the application
+# delegate; while the GUI library owned NSApp and its delegate, SDL never
+# saw it and never turned it into the SDL_DROPFILE this app listens for, so
+# advertising file associations would have advertised nothing. SDL owns the
+# delegate now, and SDLAppDelegate does implement application:openFile:
+# (confirmed with otool -oV on the bundled SDL2), so declaring the types
+# should work - but that is a follow-up, not a thing this build does today.
+# Dragging a file onto the running window works and remains the way in.
 cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

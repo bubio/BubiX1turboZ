@@ -4,7 +4,7 @@ Sharp X1 turbo Z のマルチプラットフォーム対応エミュレーター
 
 - エミュレーションコアには [Common Source Code Project](https://takeda-toshiya.my.coocan.jp/common/index.html) の eX1turboZ をそのまま使用しています。
 - アプリケーション層は [Nim](https://nim-lang.org/) で実装しています。
-- マルチメディアには SDL2、GUI には [uing](https://github.com/neroist/uing) を使用しています。
+- マルチメディアには SDL2 を使用しています。GUI（メニューバー・ダイアログ・設定パネル）は各プラットフォームのネイティブ API で実装しています。
 
 ## 対応プラットフォーム
 

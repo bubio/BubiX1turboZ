@@ -3,9 +3,9 @@
 
 	Needed by the original's Control > Paste, which types the clipboard's
 	text into the guest through the core's auto key facility. Nim's standard
-	library has no clipboard access and neither uing nor SDL2 offers plain
-	text retrieval that works without an SDL window focused, so this is a
-	direct NSPasteboard read.
+	library has no clipboard access and SDL2 offers no plain text retrieval
+	that works without a window focused, so this is a direct NSPasteboard
+	read.
 */
 
 #import <Cocoa/Cocoa.h>

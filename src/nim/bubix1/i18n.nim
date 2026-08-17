@@ -58,10 +58,10 @@ type
     msgButtonOk, msgButtonCancel, msgButtonInsert, msgButtonOpenRomFolder,
     msgButtonQuit,
     # --- The macOS application menu ---
-    # libui-ng builds these six items itself, in English literals, and
-    # offers no way to title them (libui/darwin/menu.m), so the app renames
-    # them after the fact. `$1` is the application's name, which macOS puts
-    # in three of them.
+    # macOS expects these six by name, and every platform draws its own
+    # equivalent, so they are translated here like any other label rather
+    # than left to the toolkit. `$1` is the application's name, which macOS
+    # puts in three of them.
     msgAppMenuAbout, msgAppMenuServices, msgAppMenuHide, msgAppMenuHideOthers,
     msgAppMenuShowAll, msgAppMenuQuit,
     # --- About ---
@@ -148,8 +148,7 @@ const
     msgLanguageJapanese: "日本語",
     msgLanguageChangedTitle: "Language",
     msgLanguageChangedBody:
-      "The menus are built as the application starts, so the new language " &
-      "takes effect the next time BubiX1turboZ is opened.",
+      "The new language takes effect the next time BubiX1turboZ is opened.",
 
     msgVolumeMaster: "Master",
     msgVolumeLinkLR: "Link L/R",
@@ -294,9 +293,7 @@ const
     msgLanguageEnglish: "English",
     msgLanguageJapanese: "日本語",
     msgLanguageChangedTitle: "言語",
-    msgLanguageChangedBody:
-      "メニューは起動時に組み立てられるため、言語の変更は次回 BubiX1turboZ " &
-      "を起動したときに反映されます。",
+    msgLanguageChangedBody: "次回 BubiX1turboZ を起動したときに反映されます。",
 
     msgVolumeMaster: "マスター",
     msgVolumeLinkLR: "L/R を連動",

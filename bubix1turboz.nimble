@@ -14,7 +14,6 @@ requires "nim >= 2.0.0"
 # open range would let a release be built against a package nobody here has
 # ever run.
 requires "sdl2 == 2.0.6"
-requires "uing == 0.8.2"
 
 # NOTE: `bin` is intentionally left unset. The application is not built by
 # nimble but by scripts/build_nim_app.sh, which has to pass the flags that

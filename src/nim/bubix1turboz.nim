@@ -4,22 +4,34 @@
 ## emulation to its own thread is a follow-up once this is verified stable
 ## - see docs/dev/DevelopmentPlan.md phase 5).
 ##
-## Window ownership follows the phase 1.2 spike's proven design (案 B):
-## uing owns the application object and the menu bar, SDL2 owns the
-## emulation surface. The menus themselves are built as plain AppKit
-## objects on top of libui's menu bar (see nativemenu.nim) because libui-ng
-## cannot nest menus and the structure this app mirrors is two levels deep;
-## libui keeps only the application menu's About and Quit.
+## SDL2 owns the application object, the event pump and the emulation
+## surface; everything the host platform draws around it - the menu bar,
+## the file dialogs, the volume panel, the save-state picker - is built as
+## plain AppKit objects under `bubix1/`. Phase 1.2's 案 B put a GUI library
+## (uing/libui-ng) between this file and AppKit for the menu bar and the
+## volume panel, but every other piece of UI had already had to go around
+## it, and what remained was paid for with a hidden placeholder window and
+## a list of crash-avoidance workarounds; it was removed rather than ported
+## to the other platforms three times over. See DevelopmentPlan phase 1.2.
 ##
-## Two invariants from that spike are load-bearing and must not be
-## reordered:
-##   1. `uing.init()` must run before `sdl2.init()`, or SDL's Cocoa
-##      backend claims `NSApp` first and libui's window/menu/text-edit
-##      event handling silently breaks (looks fine until you type).
-##   2. Each loop iteration must drain `sdl2.pollEvent` before calling
-##      `uing.mainStep`, or SDL never observes keyboard events - both
-##      libraries pump the same Cocoa event queue with
-##      `nextEventMatchingMask`, and whichever runs first wins.
+## One ordering rule survives that change: `sdl2.init` creates `NSApp`, so
+## nothing may put anything on screen - not even an error alert - before it
+## has run. The menu bar is installed afterwards, replacing SDL's own (see
+## nativemenu.m for what that is worth).
+##
+## Every way of quitting ends at `running = false`, which unwinds the loop
+## below and lets the saves at the bottom of `main` run. The Quit item sets
+## it directly; the Dock's Quit, the Apple Event a logout sends and SIGTERM
+## all arrive as `QuitEvent` instead, because SDL subclasses
+## `NSApplication` and overrides `-terminate:` to post `SDL_QUIT` rather
+## than terminate (verified with `otool -oV`: `SDLApplication` overrides
+## exactly `-terminate:` and `-sendEvent:`).
+##
+## `applicationShouldTerminate:` is therefore never called in this app -
+## AppKit only sends it from the `-terminate:` that SDL replaced - so the
+## application delegate is not where shutdown can be hooked here. Leaving
+## the Quit item on `running = false` rather than on `-[NSApp terminate:]`
+## also keeps it expressible on the platforms that have no such selector.
 ##
 ## Menu policy follows BluePrint/DevelopmentPlan 0.5: the core still has
 ## USE_FLOPPY_DISK=4 and USE_HARD_DISK, but only floppy drives 1-2 and no
@@ -27,13 +39,11 @@
 ## the core.
 
 import std/[options, os, strformat, strutils, times]
-import uing
 import sdl2
 import sdl2/audio
 import bubix1/core
 import bubix1/keymap
 import bubix1/paths
-import bubix1/cocoamenu
 import bubix1/recentfiles
 import bubix1/archive
 import bubix1/diskset
@@ -46,6 +56,7 @@ import bubix1/deflate
 import bubix1/fddnoise
 import bubix1/savestate
 import bubix1/statepicker
+import bubix1/volumepanel
 import bubix1/capture
 import bubix1/i18n
 
@@ -75,20 +86,9 @@ const
   # original's Save/Load State submenus.
   StateSlots = 10
   QuickSlot = -1
-  # Volume panel geometry. libui-ng cannot size a window to its contents,
-  # so the height is built from what one device's group actually occupies
-  # on screen: the group title, its two slider rows, and the margins of the
-  # group and of the box it sits in.
-  VolumeWinWidth = 420
-  VolumeGroupHeight = 104
-  VolumeGroupGap = 12
-  VolumeWinMargin = 12
-  VolumeButtonHeight = 32
-  # The master group holds one row where a device group holds two.
-  VolumeMasterHeight = 68
-  # A standard macOS title bar, used only to line one window's content up
-  # with another's when all that can be set is a frame corner.
-  TitleBarHeight = 32
+  # What the application menu and the About box call this app. Not read
+  # from the bundle: the dev build is a bare binary with no bundle to ask.
+  AppName = "BubiX1turboZ"
   # CONFIG_NAME in vm/x1/x1.h. Recorded in a save state so one taken on
   # another machine of this family cannot be loaded here by accident.
   Machine = "x1turboz"
@@ -108,12 +108,6 @@ proc sdlFreeStr(mem: cstring) {.importc: "SDL_free", cdecl.}
 # but not this one, so it is declared here; returns 0 on success.
 proc sdlGetDisplayUsableBounds(displayIndex: cint, bounds: var Rect): cint
   {.importc: "SDL_GetDisplayUsableBounds", cdecl.}
-
-# Which display a window is on, so the two bounds above can be asked about
-# that one rather than about display 0. Not wrapped by the Nim binding
-# either; returns a negative value on failure.
-proc sdlGetWindowDisplayIndex(window: WindowPtr): cint
-  {.importc: "SDL_GetWindowDisplayIndex", cdecl.}
 
 proc fail(msg: string) =
   stderr.writeLine "bubix1turboz: " & msg
@@ -160,18 +154,16 @@ proc main() =
   var uiLanguage = hostCfg.getStr("UILanguage", "auto")
   i18n.setLanguage(uiLanguage)
 
-  # Invariant 1: uing before SDL.
-  uing.init()
+  # Creates NSApp, which nothing that shows a window or an alert can do
+  # without. Nothing here needs a ROM, so it can come first.
+  if not sdl2.init(INIT_VIDEO or INIT_AUDIO or INIT_EVENTS):
+    fail "SDL_Init failed: " & $getError()
 
-  # After uing.init(), which is what creates NSApp: the alert below is an
-  # NSAlert and there is no application object before that point. Before
-  # bx1Create, which would otherwise build a machine with no ROM in it.
+  # After SDL_Init for the application object the alert below needs, and
+  # before bx1Create, which would otherwise build a machine with no ROM.
   if not iplRomPresent():
     reportMissingRom()
     quit 1
-
-  if not sdl2.init(INIT_VIDEO or INIT_AUDIO or INIT_EVENTS):
-    fail "SDL_Init failed: " & $getError()
 
   # Before bx1Create: the FDC loads the drive-noise WAVs as it is built, so
   # anything generated after this point would not be heard until the next
@@ -555,95 +547,37 @@ proc main() =
         rememberRecent(path)
         return
 
-  var win: Window
-
-  # The only uing Menu left. libui-ng exposes About and Quit exclusively
-  # through its Menu API and relocates both into the macOS application
-  # menu itself, so one has to exist - but the empty top-level menu it
-  # leaves behind on the bar is swept away after win.show() (see
-  # cocoamenu.removeTopLevelMenu below). Everything else is built with
-  # nativemenu, which can nest.
-  let appMenuHost = newMenu "File"
-  appMenuHost.addQuitItem(proc (): bool =
-    running = false
-    if win != nil:
-      win.destroy()
-      win = nil
-    true)
-  # libui-ng builds a "Preferences..." item into the application menu
-  # unconditionally, as a uiprivMenuItem with no uiMenuItem bound to it -
-  # and its click handler calls uiprivImplBug ("Clicked nonexistent
-  # uiMenuItem which should be impossible"), which aborts the process
-  # (libui/darwin/menu.m:58). So an app that never calls
-  # addPreferencesItem, like this one, ships a menu item that kills it.
-  # Bind it so it cannot abort, then hide it, since there is no
-  # preferences window here for it to open.
-  appMenuHost.addPreferencesItem(proc (sender: MenuItem, w: Window) = discard)
-  # Without an explicit addAboutItem call, libui-ng still shows the
-  # placeholder item but wires no action to it, which Cocoa then reports
-  # as permanently disabled (no target-action pair to validate).
-  appMenuHost.addAboutItem(proc (sender: MenuItem, w: Window) =
-    filedialog.message("BubiX1turboZ " & appVersion, tr(msgAboutBody)))
-
-  # Device and Host menus are built natively after win.show(); see below.
-
-  # A placeholder, not part of the UI. libui-ng will only build a menu bar
-  # for a uiWindow created with hasMenubar, and only exposes About/Quit
-  # through its Menu API, so one uiWindow has to exist - but it has nothing
-  # to show, and libui places it wherever it likes (observed at the very
-  # bottom-left corner of the screen). It is shown once so libui finalizes
-  # the menu bar, then hidden immediately below; the menu bar itself lives
-  # on NSApp, not on this window, so it survives. Nothing is parented to
-  # this window any more either - the file dialogs and the About alert are
-  # native now (filedialog.nim), precisely so they stop appearing as sheets
-  # hanging off this stray window.
-  win = newWindow("BubiX1turboZ", 320, 80, true)
-  win.onClosing = proc (sender: Window): bool =
-    # Returning true here segfaulted in testing: uing's onClosingWrapper
-    # (uing.nim) calls `controlDestroy(w.impl)` synchronously whenever
-    # this callback returns true - i.e. it destroys the NSWindow from
-    # inside its own "window should close" delegate callback, which
-    # crashes. (uing's own default onClosing, installed by newWindow
-    # before this overrides it, sidesteps that by calling quitAll()
-    # instead of destroying anything - but quitAll() is Nim's
-    # system.quit(), a hard process exit that would skip
-    # bx1SaveConfig/recentfiles.save below.)
-    #
-    # Returning false tells libui-ng not to touch the window itself;
-    # `running = false` alone drives the same graceful shutdown path as
-    # the SDL window's WindowEvent_Close and the Quit menu item, whose
-    # post-loop cleanup (`if win != nil: win.destroy()`) destroys this
-    # window safely once control has unwound back to plain Nim code,
-    # outside any Cocoa delegate callback.
-    running = false
-    false
-  win.show()
-  win.hide()
-
-  # A botched NSApp modal session from *any* Open/Save dialog (uing's
-  # openFile/saveFile - reproduced with the stock File > Open Floppy
-  # flow, not specific to phase 7's additions) can otherwise leave every
-  # menu item in the app permanently disabled after first use of a
-  # dialog. See cocoamenu.m's bx1_menu_disable_autoenable_all for the
-  # full mechanism. Must run after win.show() - NSApp has no main menu
-  # before that.
-  cocoamenu.disableAutoEnableAll()
-
-  # libui-ng put About and Quit into the application menu itself, leaving
-  # the Menu they were declared on as an empty top-level entry. Hide it -
-  # removing it makes libui's own cleanup miss it and abort at exit.
-  cocoamenu.hideTopLevelMenu("File")
-  # "" selects the application menu; the title is libui's own ASCII
-  # literal, so matching its prefix is stable.
-  cocoamenu.setMenuItemHidden("", "Preferences", true)
+  # --- Application menu ---
+  # Installing a bar of our own discards the one SDL builds for itself
+  # (an app menu plus Window and View menus this app has no use for). Its
+  # Quit item goes straight to -[NSApp terminate:], which would skip the
+  # bx1SaveConfig/recentfiles.save at the end of main; the item below
+  # leaves through the same `running = false` as every other exit.
+  #
+  # Only the items this app actually offers are here - there is no
+  # Preferences window, so there is no Preferences item.
+  let appMenu = nativemenu.installMenuBar(AppName)
+  appMenu.addItem(trf(msgAppMenuAbout, AppName), proc () =
+    filedialog.message(AppName & " " & appVersion, tr(msgAboutBody)))
+  appMenu.addSeparator()
+  appMenu.addStandardItem(tr(msgAppMenuServices), siServices)
+  appMenu.addSeparator()
+  # The shortcuts macOS puts on these are part of the platform, so they are
+  # given the standard ones rather than any of this app's choosing.
+  appMenu.addStandardItem(trf(msgAppMenuHide, AppName), siHide, "h")
+  appMenu.addStandardItem(tr(msgAppMenuHideOthers), siHideOthers, "h",
+    ModCommand or ModOption)
+  appMenu.addStandardItem(tr(msgAppMenuShowAll), siShowAll)
+  appMenu.addSeparator()
+  appMenu.addItem(trf(msgAppMenuQuit, AppName), proc () = running = false, "q")
 
   # --- Control menu (built natively; see nativemenu.nim) ---
   # Item order, wording and grouping follow the original eX1turboZ's own
   # Control menu (src/res/x1turboz.rc), minus what this port does not have:
   # the three "Debug ... CPU" items and "Close Debugger" (the core's
   # debugger console API is stubbed out here, and a menu that does nothing
-  # is worse than no menu), and "Exit" (libui-ng puts Quit in the
-  # application menu, where macOS expects it).
+  # is worse than no menu), and "Exit" (macOS expects Quit in the
+  # application menu, which is where this app puts it).
   let controlMenu = nativemenu.addMenu(tr(msgMenuControl))
   controlMenu.addItem(tr(msgReset), proc () = resetMachine(), key = "r")
   # The original labels special_reset() "NMI" for this machine; on the X1
@@ -1304,10 +1238,11 @@ proc main() =
 
   # --- Volume window (Host > Volume) ---
   # The original opens a modal dialog of per-device L/R trackbars
-  # (IDD_VOLUME in x1turboz.rc). Same idea here, as a uing window built
-  # once at startup and shown on demand: repeatedly creating and destroying
-  # uiWindows is exactly the pattern that makes libui-ng's teardown
-  # complain, and one live hidden window costs nothing.
+  # (IDD_VOLUME in x1turboz.rc). Same idea here, as a window built once at
+  # startup and shown on demand, which edits the running machine live where
+  # the original edited a copy and committed it on OK. The panel itself is
+  # AppKit (volumepanel.nim); what it reports is turned into levels here,
+  # which is the only side that can see the VM.
   let volumeCount = bx1GetSoundVolumeCount().int
   let printerType = bx1GetPrinterType(h).int
   # Device names come from the core's own sound_device_caption table
@@ -1339,25 +1274,6 @@ proc main() =
     of 1: vmSoundType() >= 1
     of 2: vmSoundType() >= 2
     else: true
-  # Sliders stay indexed by the core's device number, so the rows that are
-  # skipped simply leave a nil entry nothing ever touches.
-  var volumeL = newSeq[Slider](volumeCount)
-  var volumeR = newSeq[Slider](volumeCount)
-  let volumeWin = newWindow(tr(msgVolume), 1, 1, false)
-  volumeWin.margined = true
-  # Nothing here reads better wider, and dragging the panel smaller than the
-  # rows need puts them back on top of each other - libui-ng lets a group
-  # shrink past its own contents (see the stretchy note below).
-  volumeWin.resizeable = false
-  # One group per device rather than one flat grid of anonymous bars: the
-  # two sliders of a device are its left and right channel, which a caption
-  # sitting beside an unlabelled pair does not say.
-  # There is no numeric readout, matching the original's dialog (IDD_VOLUME
-  # is trackbars only): libui-ng sizes a grid column to the widest label in
-  # it, so a live "-40 dB" that shrinks to "0 dB" would resize the slider
-  # beside it on every drag. The slider carries the value as a tooltip
-  # instead, which libui-ng gives it by default.
-  let volumeBox = newVerticalBox(true)
 
   # Master and Link L/R are this port's own, not the original's. The core
   # has no master level - volume exists per device only - so the master is
@@ -1367,27 +1283,20 @@ proc main() =
   # attenuation into the stored levels and apply it again next launch.
   var volumeMaster = max(-40, min(0, hostCfg.getInt("VolumeMaster", 0)))
   var volumeLinked = hostCfg.getBool("VolumeLinkLR", false)
-  proc setLevel(slider: Slider, level: int) =
-    ## Sets a slider from code, and refreshes the tooltip that carries its
-    ## value. libui-ng only rewrites that text when the *user* moves the
-    ## knob (darwin/slider.m:57), so a knob moved from here would otherwise
-    ## sit under the previous number - and the tooltip is the only place
-    ## this panel shows a number at all. Re-asserting hasToolTip is what
-    ## rewrites it (slider.m:92-98).
-    slider.value = level
-    slider.hasToolTip = true
   proc volumeMixed(level: int): int = max(-40, min(0, level + volumeMaster))
   proc applyVolume(dev: int) =
     ## Pushes one device's level to the machine, master included. Nothing
     ## is stored: the caller decides whether this was a change worth
     ## remembering (storeVolume) or only a re-application of one.
-    bx1ApplyVolume(h, dev.cint, volumeMixed(volumeL[dev].value).cint,
-      volumeMixed(volumeR[dev].value).cint)
+    bx1ApplyVolume(h, dev.cint,
+      volumeMixed(volumepanel.level(dev, ChannelL)).cint,
+      volumeMixed(volumepanel.level(dev, ChannelR)).cint)
   proc storeVolume(dev: int) =
     ## Remembers one device's levels as the user set them, then applies the
     ## mixed result. bx1SetVolume also applies what it stores, so the order
     ## matters: the machine must end up holding the mixed value.
-    bx1SetVolume(h, dev.cint, volumeL[dev].value.cint, volumeR[dev].value.cint)
+    bx1SetVolume(h, dev.cint, volumepanel.level(dev, ChannelL).cint,
+      volumepanel.level(dev, ChannelR).cint)
     applyVolume(dev)
   proc applyAllVolumes() =
     for i in volumeDevices:
@@ -1400,125 +1309,62 @@ proc main() =
     ## this the panel could open showing rows the link says are equal and
     ## they visibly are not.
     for i in volumeDevices:
-      if volumeDeviceBuilt(i) and volumeR[i].value != volumeL[i].value:
-        volumeR[i].setLevel(volumeL[i].value)
+      if volumeDeviceBuilt(i) and
+          volumepanel.level(i, ChannelR) != volumepanel.level(i, ChannelL):
+        volumepanel.setLevel(i, ChannelR, volumepanel.level(i, ChannelL))
         storeVolume(i)
-  proc snap(slider: Slider): int =
-    ## The value a slider is worth, with its knob put back on it.
-    ##
-    ## The range is whole decibels but the control underneath is continuous,
-    ## so a knob dragged to -21.8 reports (and applies, and copies to the
-    ## other channel) -22 while sitting visibly short of it. Writing the
-    ## value back moves the knob onto the step it actually means, which is
-    ## also what makes two linked channels line up exactly. Setting a value
-    ## from code does not call the handler back (libui-ng only reports user
-    ## changes), so this cannot recurse.
-    result = slider.value
-    slider.setLevel(result)
-  proc makeVolumeChanged(dev: int, isLeft: bool): proc (sender: Slider) =
-    result = proc (sender: Slider) =
-      let level = snap(sender)
-      if volumeLinked:
-        if isLeft:
-          volumeR[dev].setLevel(level)
-        else:
-          volumeL[dev].setLevel(level)
-      storeVolume(dev)
-  # Above the devices, since it acts on all of them.
-  let masterGroup = newGroup(tr(msgVolumeMaster), true)
-  let masterRows = newVerticalBox(true)
-  let masterRow = newHorizontalBox(true)
-  let masterSlider = newSlider(-40 .. 0, proc (sender: Slider) =
-    volumeMaster = snap(sender)
-    applyAllVolumes())
-  masterSlider.setLevel(volumeMaster)
-  masterRow.add(newLabel("L+R"))
-  masterRow.add(masterSlider, true)
-  masterRows.add(masterRow, true)
-  masterGroup.child = masterRows
-  volumeBox.add(masterGroup, true)
 
-  for i in volumeDevices:
-    let group = newGroup($bx1GetSoundDeviceCaption(i.cint), true)
-    # Boxes, not a Grid. A grid lays the two channels out just as well, but
-    # its darwin backend wraps every cell in a container view of its own,
-    # and the second row's containers ended up unreachable to the mouse -
-    # the R slider drew correctly and reported itself enabled while no
-    # click ever got to it. Boxes put the controls in the group directly.
-    let rows = newVerticalBox(true)
-    # Range matches the core's own clamp on set_sound_device_volume.
-    volumeL[i] = newSlider(-40 .. 0, makeVolumeChanged(i, true))
-    volumeR[i] = newSlider(-40 .. 0, makeVolumeChanged(i, false))
-    volumeL[i].setLevel(bx1GetVolumeL(h, i.cint).int)
-    volumeR[i].setLevel(bx1GetVolumeR(h, i.cint).int)
-    for parts in [("L", volumeL[i]), ("R", volumeR[i])]:
-      let (channel, slider) = parts
-      let row = newHorizontalBox(true)
-      row.add(newLabel(channel))
-      row.add(slider, true) # stretchy: the slider takes the spare width
-      # Stretchy here too, for the reason the groups are stretchy below.
-      rows.add(row, true)
-    group.child = rows
-    # Every group stretchy, so the window's height is shared out evenly.
-    # A non-stretchy group is held at a minimum that libui-ng computes too
-    # small for two slider rows, and the rows then overlap; only the ones
-    # given the leftover height escape that.
-    volumeBox.add(group, true)
-  let volumeBar = newHorizontalBox(true)
+  volumepanel.setOnChange(proc (device, channel, value: int) =
+    if device == volumepanel.Master:
+      volumeMaster = value
+      applyAllVolumes()
+    else:
+      if volumeLinked:
+        let other = if channel == ChannelL: ChannelR else: ChannelL
+        volumepanel.setLevel(device, other, value)
+      storeVolume(device))
   # One switch for the whole panel rather than one per device: the two
   # channels of a device are almost always wanted at the same level, and a
   # checkbox per group would add a row to every one of them. Ticking it
   # brings every R up to its L there and then, rather than waiting for each
   # to be dragged: a panel that says the channels are linked while showing
   # rows where they visibly are not is the confusing half of both worlds.
-  let linkBox = newCheckbox(tr(msgVolumeLinkLR), proc (sender: Checkbox) =
-    volumeLinked = sender.checked
+  volumepanel.setOnLink(proc (linked: bool) =
+    volumeLinked = linked
     if volumeLinked:
       equalizeChannels())
-  linkBox.checked = volumeLinked
-  volumeBar.add(linkBox)
-  volumeBar.add(newLabel(""), true) # pushes the button to the trailing edge
   # Same as the original's Reset button: back to 0dB, which is the config's
-  # own default, and the master with it. Applied straight away because this
-  # panel has no OK to apply it at - it edits the running machine live,
-  # where the original edited a copy and committed it on OK.
-  volumeBar.add(newButton(tr(msgReset), proc (sender: Button) =
+  # own default, and the master with it.
+  volumepanel.setOnReset(proc () =
     volumeMaster = 0
-    masterSlider.setLevel(0)
+    volumepanel.setLevel(volumepanel.Master, ChannelL, 0)
     for i in volumeDevices:
       # Greyed rows are left alone. The original zeroes all seven channels,
       # but nothing here has offered the user a way to change a channel its
       # machine does not have, so this must not write one either - a
       # disabled control that still edits the config is not disabled.
       if volumeDeviceBuilt(i):
-        volumeL[i].setLevel(0)
-        volumeR[i].setLevel(0)
-        storeVolume(i)))
-  volumeBox.add(volumeBar)
-  volumeWin.child = volumeBox
+        volumepanel.setLevel(i, ChannelL, 0)
+        volumepanel.setLevel(i, ChannelR, 0)
+        storeVolume(i))
+
+  volumepanel.begin(tr(msgVolume), tr(msgVolumeMaster), tr(msgVolumeLinkLR),
+    tr(msgReset))
+  volumepanel.setLevel(volumepanel.Master, ChannelL, volumeMaster)
+  volumepanel.setLinked(volumeLinked)
+  for i in volumeDevices:
+    volumepanel.addDevice(i, $bx1GetSoundDeviceCaption(i.cint))
+    volumepanel.setLevel(i, ChannelL, bx1GetVolumeL(h, i.cint).int)
+    volumepanel.setLevel(i, ChannelR, bx1GetVolumeR(h, i.cint).int)
+  volumepanel.finish()
+
   proc refreshVolumeAvailability() =
     ## Greys the rows whose board this machine does not have, and un-greys
     ## them when a reset has since built one. Called on every show, not
     ## once: Device > Sound plus Control > Reset changes the answer while
     ## the panel is alive.
-    ##
-    ## The row stays rather than vanishing: the original lists every channel
-    ## of the table unconditionally, and a row that disappears looks like
-    ## the app lost the device. Greyed says what the original's own
-    ## (commented out) EnableWindow calls were reaching for - the channel
-    ## exists, this machine just has no board behind it.
-    ##
-    ## The sliders are disabled rather than the Group around them - a
-    ## disabled Group has no visible effect here - and only once the whole
-    ## tree is assembled, since libui-ng pushes an enable state down when a
-    ## control is given its parent.
     for i in volumeDevices:
-      if volumeDeviceBuilt(i):
-        volumeL[i].enable()
-        volumeR[i].enable()
-      else:
-        volumeL[i].disable()
-        volumeR[i].disable()
+      volumepanel.setDeviceEnabled(i, volumeDeviceBuilt(i))
   refreshVolumeAvailability()
   # The machine starts out holding config.ini's per-device levels; a master
   # restored from the host settings has to be mixed into them once here, or
@@ -1527,63 +1373,10 @@ proc main() =
     equalizeChannels()
   applyAllVolumes()
   afterReset = applyAllVolumes
-  # Sized here rather than at newWindow, where the children the size has to
-  # fit did not exist yet. libui-ng has no "size to fit contents", so the
-  # per-device height is measured from what the platform actually lays out
-  # (group title, two slider rows, the box's own padding).
-  volumeWin.contentSize = (width: VolumeWinWidth,
-    height: VolumeMasterHeight + VolumeGroupHeight * volumeDevices.len +
-      VolumeGroupGap * (volumeDevices.len + 1) + VolumeButtonHeight +
-      VolumeWinMargin * 2)
-  volumeWin.onClosing = proc (sender: Window): bool =
-    # Hide rather than destroy, and return false so libui-ng does not
-    # destroy it either - the same rule the main window follows, for the
-    # same reason (uing destroys the window from inside its own
-    # "should close" delegate callback, which crashes).
-    volumeWin.hide()
-    false
 
-  var volumePlaced = false
   proc showVolumeWindow() =
-    ## Shows the volume panel, centering it over the emulator window the
-    ## first time only - moving it back on every open would undo wherever
-    ## the user had put it.
     refreshVolumeAvailability()
-    if not volumePlaced and sdlWin != nil:
-      volumePlaced = true
-      var wx, wy, ww, wh: cint
-      sdlWin.getPosition(wx, wy)
-      sdlWin.getSize(ww, wh)
-      let size = volumeWin.contentSize
-      # SDL measures from the top of the display; libui-ng's darwin backend
-      # measures from the top of the *visible* frame, i.e. below the menu
-      # bar (window.m:269-283), so the two differ by exactly that bar.
-      # Single display assumed for the horizontal axis, which is where the
-      # two do agree.
-      var menuBarHeight = 0
-      let display = sdlGetWindowDisplayIndex(sdlWin)
-      var full, usable: Rect
-      if display >= 0 and getDisplayBounds(display, full) == SdlSuccess and
-          sdlGetDisplayUsableBounds(display, usable) == 0:
-        menuBarHeight = usable.y.int - full.y.int
-      # Both sizes above describe content areas, while the position being
-      # set describes a frame corner, so centering one on the other has to
-      # step over one title bar. SDL2's Cocoa backend answers
-      # SDL_GetWindowBordersSize with "not supported", so the standard one
-      # is assumed; getting it wrong only slides the panel a few points.
-      let want = (x: wx.int + (ww.int - size.width) div 2,
-        y: wy.int + (wh.int - size.height) div 2 - TitleBarHeight - menuBarHeight)
-      volumeWin.position = want
-      volumeWin.show()
-      # The position above is set while the window has never been on screen,
-      # where the darwin backend has no NSScreen to measure against and can
-      # drop it. Reading back after show() is the only way to tell, and
-      # costs one redundant move in the case where it worked.
-      let got = volumeWin.position
-      if abs(got.x - want.x) > 2 or abs(got.y - want.y) > 2:
-        volumeWin.position = want
-    else:
-      volumeWin.show()
+    volumepanel.show()
 
   # --- Host menu ---
   # Item order and wording follow the original (x1turboz.rc IDR_MENU1 >
@@ -1786,26 +1579,6 @@ proc main() =
       if chosen != uiLanguage:
         uiLanguage = chosen
         filedialog.message(tr(msgLanguageChangedTitle), tr(msgLanguageChangedBody)))
-
-  # libui-ng attaches no keyboard shortcuts to any menu item (phase 1.2);
-  # wire up the standard macOS ones by hand. Must happen after win.show()
-  # - NSApp has no main menu before that.
-  discard cocoamenu.setMenuShortcut("", "Quit", "q")
-  # libui-ng writes the application menu's six standard items itself, in
-  # English literals, and offers no way to title them (its darwin/menu.m).
-  # They are renamed here instead, matched on the prefix libui put there -
-  # which nothing else changes. Applied in every language: the English
-  # column of the catalog holds exactly what libui already wrote, so this
-  # is one code path rather than a translated special case. "Hide Others"
-  # goes first only so its prefix cannot be read as part of "Hide <app>".
-  const AppName = "BubiX1turboZ"
-  discard cocoamenu.setMenuItemTitle("", "About", trf(msgAppMenuAbout, AppName))
-  discard cocoamenu.setMenuItemTitle("", "Services", tr(msgAppMenuServices))
-  discard cocoamenu.setMenuItemTitle("", "Hide Others", tr(msgAppMenuHideOthers))
-  discard cocoamenu.setMenuItemTitle("", "Hide " & AppName,
-    trf(msgAppMenuHide, AppName))
-  discard cocoamenu.setMenuItemTitle("", "Show All", tr(msgAppMenuShowAll))
-  discard cocoamenu.setMenuItemTitle("", "Quit", trf(msgAppMenuQuit, AppName))
 
   # Nearest-neighbor scaling: X1 text/graphics are drawn at exact pixel
   # boundaries, and linear filtering (SDL's default for the accelerated
@@ -2020,11 +1793,8 @@ proc main() =
     renderer.present()
     inc drawnFrames
 
-  uing.mainSteps()
-
   var ev = sdl2.defaultEvent
   while running:
-    # Invariant 2: SDL first, then libui.
     while pollEvent(ev):
       case ev.kind
       of QuitEvent:
@@ -2079,7 +1849,6 @@ proc main() =
           sdlFreeStr(raw)
       else:
         discard
-    discard uing.mainStep(0)
 
     # Advance the VM. Normally this is paced by the audio ring buffer
     # (docs/dev/DevelopmentPlan.md architecture decision 4): keep running
@@ -2192,10 +1961,6 @@ proc main() =
   renderer.destroy()
   sdlWin.destroy()
   sdl2.quit()
-  volumeWin.destroy()
-  if win != nil:
-    win.destroy()
-  uing.uninit()
   bx1Destroy(h)
 
 main()

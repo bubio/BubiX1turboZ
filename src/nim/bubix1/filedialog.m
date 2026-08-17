@@ -1,20 +1,16 @@
 /*
 	BubiX1turboZ - native open/save panels and alerts.
 
-	Replaces uing's uiOpenFile / uiSaveFile / uiMsgBox, which all funnel
-	through libui's runSavePanel and open as a *sheet* attached to the
-	uiWindow passed in (libui/darwin/stddialogs.m:
-	beginSheetModalForWindow:). This app's only uiWindow exists solely so
-	libui will build a menu bar; it holds nothing worth showing, and libui
-	places it wherever it likes - in practice a corner of the screen. A file
-	dialog dropping out of that stray window is what the user sees as "the
-	Open dialog is wrong, and there is an odd window".
+	The panels run app-modal rather than as a sheet. A sheet needs a parent
+	window and the only window this app has belongs to SDL, which is not
+	something to hang the app's own dialogs off; app-modal is also where
+	macOS puts an Open panel that belongs to the application rather than to
+	a document.
 
-	Running the panels app-modal instead puts them where macOS puts an
-	app-modal panel, needs no parent window at all, and avoids libui's
-	runModalForWindow bookkeeping - the same bookkeeping that leaves NSApp
-	believing a modal session is still live and greys out the whole menu
-	bar afterwards (see cocoamenu.m's bx1_menu_disable_autoenable_all).
+	Running them this way keeps NSApp's modal-session bookkeeping honest,
+	which matters more than it sounds: a session left half-open makes
+	Cocoa's automatic menu validation disable the entire menu bar afterwards
+	(see the make_menu comment in nativemenu.m).
 */
 
 #import <Cocoa/Cocoa.h>
@@ -121,7 +117,7 @@ extern NSString *bx1_ns_string(const char *bytes);
 
 	Returns the chosen row, or -1 if the user cancelled. A pop-up rather than
 	a table keeps this to an app-modal alert, matching the file panels above:
-	no parent window, no libui modal bookkeeping.
+	no parent window, no modal-session bookkeeping to get wrong.
 
 	Both button titles arrive from the caller. This file is the macOS
 	backend of a UI meant to grow GTK and Win32 siblings, so the words it
@@ -191,12 +187,12 @@ void bx1_dialog_message(const char *title, const char *body, const char *ok_labe
 	cannot start without the ROM - so this reports what happened rather
 	than asking the caller to act on it.
 
-	This one runs before the main loop, which the other dialogs here do
-	not: uiInit has created NSApp but nothing has called -run yet, and an
-	NSApp that has not finished launching puts up no window at all - the
-	process simply sits in runModal with nothing on screen. -finishLaunching
-	is the part of -run that makes the app able to show one; calling it
-	early is safe because -run skips it once it has been done.
+	This one runs before the main loop, which the other dialogs here do not.
+	That is safe because SDL_Init has already registered the application:
+	it creates NSApp, sets the Regular activation policy an app needs to
+	show a window at all, and calls -finishLaunching. Without those an
+	alert never appears and the process simply sits in runModal with
+	nothing on screen, so this must not be called any earlier than that.
 */
 int bx1_dialog_missing_rom(const char *title, const char *body, const char *folder,
                            const char *open_label, const char *quit_label)
@@ -205,14 +201,6 @@ int bx1_dialog_missing_rom(const char *title, const char *body, const char *fold
 		NSAlert *alert;
 		NSString *path;
 
-		if (![NSApp isRunning]) {
-			// Regular, not the policy a process launched outside a bundle
-			// gets by default: an accessory application shows no window
-			// and cannot be activated, so the alert would never appear.
-			// SDL_Init normally sets this, and it has not run yet here.
-			[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-			[NSApp finishLaunching];
-		}
 		// An app with no window yet is not necessarily frontmost, which
 		// would leave the alert behind whatever the user was looking at.
 		[NSApp activateIgnoringOtherApps:YES];
