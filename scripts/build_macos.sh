@@ -107,15 +107,14 @@ else
        "building without the app's accent colour" >&2
 fi
 
-# CFBundleDocumentTypes is deliberately absent, for now. Opening a document
-# from the Finder arrives as an Apple Event handled by the application
-# delegate; while the GUI library owned NSApp and its delegate, SDL never
-# saw it and never turned it into the SDL_DROPFILE this app listens for, so
-# advertising file associations would have advertised nothing. SDL owns the
-# delegate now, and SDLAppDelegate does implement application:openFile:
-# (confirmed with otool -oV on the bundled SDL2), so declaring the types
-# should work - but that is a follow-up, not a thing this build does today.
-# Dragging a file onto the running window works and remains the way in.
+# CFBundleDocumentTypes is deliberately absent - a decision now, not a gap.
+# It could work: opening a document from the Finder arrives as an Apple
+# Event handled by the application delegate, and SDLAppDelegate does
+# implement application:openFile: (confirmed with otool -oV on the bundled
+# SDL2), so the types would turn into the SDL_DROPFILE this app listens
+# for. It is left out because an emulator has no business claiming .d88 and
+# the rest from whatever the user already opens them with; dragging a file
+# onto the running window is the way in, and it is enough.
 cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

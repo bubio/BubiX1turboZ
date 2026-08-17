@@ -39,6 +39,9 @@ static const CGFloat kRowHeight = 22.0;
 static const CGFloat kRowGap = 4.0;
 static const CGFloat kLabelWidth = 28.0;
 static const CGFloat kLabelGap = 6.0;
+// Wide enough for the longest reading this range can produce, "-40 dB", so
+// the column never has to resize. See make_readout for the rest of why.
+static const CGFloat kReadoutWidth = 52.0;
 static const CGFloat kBoxPadX = 6.0;
 static const CGFloat kBoxPadY = 6.0;
 static const CGFloat kGroupGap = 10.0;
@@ -54,6 +57,8 @@ static NSWindow *panel = nil;
 // pointers across the FFI boundary. Tags encode the device and channel;
 // see tag_for() below.
 static NSMutableDictionary *sliders_by_tag = nil;
+// tag -> NSTextField, the reading beside each slider. Same keys as above.
+static NSMutableDictionary *readouts_by_tag = nil;
 // The group boxes are stacked as they are added and only positioned once
 // the total height is known, which is not until bx1_volume_end.
 static NSMutableArray *boxes = nil;
@@ -77,17 +82,23 @@ static NSSlider *slider_for(int device, int channel)
 		[NSNumber numberWithInt:tag_for(device, channel)]];
 }
 
+static NSTextField *readout_for_tag(int tag)
+{
+	if (readouts_by_tag == nil) {
+		return nil;
+	}
+	return [readouts_by_tag objectForKey:[NSNumber numberWithInt:tag]];
+}
+
 /*
 	Puts a slider's knob on the whole decibel it reports, and writes that
-	number into its tooltip.
+	number into the reading beside it.
 
 	The range is whole decibels but the control underneath is continuous, so
 	a knob dragged to -21.8 reports (and applies, and copies to the other
 	channel) -22 while sitting visibly short of it. Writing the value back
 	moves the knob onto the step it actually means, which is also what makes
-	two linked channels line up exactly. The tooltip is the only place this
-	panel shows a number at all, matching the original's dialog (IDD_VOLUME
-	is trackbars only).
+	two linked channels line up exactly.
 */
 static int snap(NSSlider *slider)
 {
@@ -104,7 +115,8 @@ static int snap(NSSlider *slider)
 		value = kMaxLevel;
 	}
 	[slider setDoubleValue:value];
-	[slider setToolTip:[NSString stringWithFormat:@"%d dB", value]];
+	[readout_for_tag((int)[slider tag])
+		setStringValue:[NSString stringWithFormat:@"%d dB", value]];
 	return value;
 }
 
@@ -168,23 +180,54 @@ static NSTextField *make_label(NSRect frame, NSString *text)
 	return label;
 }
 
-// One "L" / "R" label and the slider beside it, laid out from the top of
-// `parent` downwards. `row` counts from 0.
+/*
+	The number beside a slider, e.g. "-13 dB".
+
+	Right-aligned in a column of fixed width, and set in the system font's
+	monospaced-digit variant. Both matter for the same reason: this text
+	changes on every frame of a drag, and a proportional font in a column
+	sized to its contents would make the digits - and the slider beside
+	them - twitch as the value went from "0 dB" to "-40 dB" and back.
+*/
+static NSTextField *make_readout(NSRect frame)
+{
+	NSTextField *readout = make_label(frame, @"0 dB");
+
+	[readout setAlignment:NSTextAlignmentRight];
+	[readout setFont:[NSFont monospacedDigitSystemFontOfSize:
+		[NSFont smallSystemFontSize] weight:NSFontWeightRegular]];
+	[readout setTextColor:[NSColor secondaryLabelColor]];
+	return readout;
+}
+
+// One "L" / "R" label, the slider beside it and the slider's reading, laid
+// out from the top of `parent` downwards. `row` counts from 0.
 static void add_row(NSView *parent, int row, NSString *label,
 	int device, int channel)
 {
 	CGFloat height = [parent frame].size.height;
 	CGFloat y = height - (row + 1) * kRowHeight - row * kRowGap;
 	CGFloat sliderX = kLabelWidth + kLabelGap;
+	CGFloat sliderWidth = kInnerWidth - sliderX - kLabelGap - kReadoutWidth;
 	NSTextField *caption;
+	NSTextField *readout;
 	NSSlider *slider;
 
 	caption = make_label(NSMakeRect(0.0, y, kLabelWidth, kRowHeight), label);
 	[parent addSubview:caption];
 	[caption release];
 
+	// Baseline-nudged down a point: NSTextField centers its text in its
+	// frame while NSSlider centers its track, and the two do not agree.
+	readout = make_readout(NSMakeRect(kInnerWidth - kReadoutWidth, y - 1.0,
+		kReadoutWidth, kRowHeight));
+	[parent addSubview:readout];
+	[readouts_by_tag setObject:readout
+		forKey:[NSNumber numberWithInt:tag_for(device, channel)]];
+	[readout release];
+
 	slider = [[NSSlider alloc] initWithFrame:
-		NSMakeRect(sliderX, y, kInnerWidth - sliderX, kRowHeight)];
+		NSMakeRect(sliderX, y, sliderWidth, kRowHeight)];
 	[slider setMinValue:kMinLevel];
 	[slider setMaxValue:kMaxLevel];
 	[slider setTag:tag_for(device, channel)];
@@ -243,6 +286,9 @@ void bx1_volume_begin(const char *title, const char *master_title,
 	}
 	if (sliders_by_tag == nil) {
 		sliders_by_tag = [[NSMutableDictionary alloc] init];
+	}
+	if (readouts_by_tag == nil) {
+		readouts_by_tag = [[NSMutableDictionary alloc] init];
 	}
 	if (boxes == nil) {
 		boxes = [[NSMutableArray alloc] init];
@@ -348,7 +394,7 @@ void bx1_volume_set_level(int device, int channel, int value)
 		return;
 	}
 	[slider setDoubleValue:value];
-	// Through snap() rather than setting the tooltip here, so a level
+	// Through snap() rather than writing the reading here, so a level
 	// arriving from the Nim side is displayed by exactly the same rule as
 	// one the user dragged.
 	(void)snap(slider);
@@ -373,8 +419,15 @@ int bx1_volume_get_level(int device, int channel)
 */
 void bx1_volume_set_device_enabled(int device, int enabled)
 {
-	[slider_for(device, 0) setEnabled:(enabled != 0)];
-	[slider_for(device, 1) setEnabled:(enabled != 0)];
+	int channel;
+
+	for (channel = 0; channel < 2; channel++) {
+		[slider_for(device, channel) setEnabled:(enabled != 0)];
+		// The reading is greyed by hand rather than with -setEnabled:,
+		// which a label whose colour was set explicitly ignores.
+		[readout_for_tag(tag_for(device, channel)) setTextColor:(enabled != 0
+			? [NSColor secondaryLabelColor] : [NSColor tertiaryLabelColor])];
+	}
 }
 
 void bx1_volume_set_linked(int linked)
