@@ -11,6 +11,8 @@ proc bx1DialogSaveFile(extensions, suggestedName: cstring): cstring
   {.importc: "bx1_dialog_save_file", cdecl.}
 proc bx1DialogFree(text: cstring) {.importc: "bx1_dialog_free", cdecl.}
 proc bx1DialogMessage(title, body: cstring) {.importc: "bx1_dialog_message", cdecl.}
+proc bx1DialogMissingRom(title, body, folder: cstring): cint
+  {.importc: "bx1_dialog_missing_rom", cdecl.}
 proc bx1DialogChooseDisk(title: cstring, rows: cstringArray, count, initial: cint): cint
   {.importc: "bx1_dialog_choose_disk", cdecl.}
 
@@ -40,6 +42,11 @@ proc saveFile*(extensions = "", suggestedName = ""): string =
 
 proc message*(title, body: string) =
   bx1DialogMessage(title.cstring, body.cstring)
+
+proc missingRom*(title, body, folder: string): bool {.discardable.} =
+  ## Startup alert for a ROM folder with no BIOS ROM in it, offering to
+  ## reveal `folder` in the Finder. True if the folder was revealed.
+  bx1DialogMissingRom(title.cstring, body.cstring, folder.cstring) != 0
 
 proc chooseDisk*(title: string, rows: openArray[string], initial = 0): int =
   ## Asks which disk of a multi-disk image to insert. Returns -1 if the user

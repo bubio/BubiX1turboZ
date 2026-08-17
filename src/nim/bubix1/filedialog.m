@@ -171,3 +171,65 @@ void bx1_dialog_message(const char *title, const char *body)
 		[alert runModal];
 	}
 }
+
+/*
+	The startup alert shown when the BIOS ROM is missing. Separate from
+	bx1_dialog_message because it carries a second button that reveals
+	`folder` in the Finder: telling someone which folder to fill is far
+	less useful than putting that folder in front of them, and the folder
+	is one the app just created inside ~/Library, which is not somewhere a
+	user can conveniently navigate to by hand.
+
+	Returns 1 if the folder was revealed, 0 if the user dismissed the
+	alert. Both answers end the same way for the caller - the emulator
+	cannot start without the ROM - so this reports what happened rather
+	than asking the caller to act on it.
+
+	This one runs before the main loop, which the other dialogs here do
+	not: uiInit has created NSApp but nothing has called -run yet, and an
+	NSApp that has not finished launching puts up no window at all - the
+	process simply sits in runModal with nothing on screen. -finishLaunching
+	is the part of -run that makes the app able to show one; calling it
+	early is safe because -run skips it once it has been done.
+*/
+int bx1_dialog_missing_rom(const char *title, const char *body, const char *folder)
+{
+	@autoreleasepool {
+		NSAlert *alert;
+		NSString *path;
+
+		if (![NSApp isRunning]) {
+			// Regular, not the policy a process launched outside a bundle
+			// gets by default: an accessory application shows no window
+			// and cannot be activated, so the alert would never appear.
+			// SDL_Init normally sets this, and it has not run yet here.
+			[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+			[NSApp finishLaunching];
+		}
+		// An app with no window yet is not necessarily frontmost, which
+		// would leave the alert behind whatever the user was looking at.
+		[NSApp activateIgnoringOtherApps:YES];
+
+		alert = [[[NSAlert alloc] init] autorelease];
+		[alert setAlertStyle:NSAlertStyleWarning];
+		[alert setMessageText:title != NULL ? [NSString stringWithUTF8String:title] : @""];
+		[alert setInformativeText:body != NULL ? [NSString stringWithUTF8String:body] : @""];
+		// First button added is the default one, and opening the folder is
+		// the only action that gets the user closer to a running emulator.
+		[alert addButtonWithTitle:@"Open ROM Folder"];
+		[alert addButtonWithTitle:@"Quit"];
+
+		if ([alert runModal] != NSAlertFirstButtonReturn) {
+			return 0;
+		}
+		if (folder == NULL || folder[0] == '\0') {
+			return 0;
+		}
+		path = [NSString stringWithUTF8String:folder];
+		// selectFile:nil opens the folder itself rather than selecting it
+		// inside its parent, which is what "open the ROM folder" means.
+		[[NSWorkspace sharedWorkspace] selectFile:nil
+						 inFileViewerRootedAtPath:path];
+		return 1;
+	}
+}

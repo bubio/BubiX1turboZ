@@ -118,11 +118,52 @@ proc fail(msg: string) =
   stderr.writeLine "bubix1turboz: " & msg
   quit 1
 
+const IplRomFileName = "IPLROM.X1T"
+  ## The one file the machine cannot be built without - `x1.h`'s
+  ## IPL_ROM_FILE_NAME. Everything else the core looks for either has a
+  ## fallback (the font ROMs) or switches it to a working mode when absent
+  ## (SUBROM/KBDROM select the pseudo sub-CPU).
+
+proc iplRomPresent(): bool =
+  ## Matched case-insensitively: the core spells the name in upper case
+  ## while ROM sets ship it as `IPLROM.x1t`. macOS's default APFS is
+  ## case-insensitive, so this only matters on a case-sensitive volume -
+  ## but there it decides between running and a black screen.
+  for kind, path in walkDir(paths.romsDir()):
+    if kind in {pcFile, pcLinkToFile} and
+        path.extractFilename.toUpperAscii == IplRomFileName:
+      return true
+  false
+
+proc reportMissingRom() =
+  ## Shown instead of starting: without the BIOS ROM the emulator draws
+  ## nothing but a black window, which says nothing about what is wrong or
+  ## where to fix it. The folder exists by now (ensureDirsExist), so the
+  ## alert can offer to open it - it lives inside ~/Library, where the
+  ## Finder gives no easy way to navigate by hand.
+  let dir = paths.romsDir()
+  stderr.writeLine "bubix1turboz: " & IplRomFileName & " not found in " & dir
+  filedialog.missingRom(
+    "BIOS ROM not found",
+    "BubiX1turboZ needs the X1 turbo Z BIOS ROM to start.\n\n" &
+    "Put " & IplRomFileName & " - and the font ROMs FNT0808.X1, " &
+    "FNT0816.X1 and FNT1616.X1 - into this folder, then open " &
+    "BubiX1turboZ again:\n\n" & dir,
+    dir)
+
 proc main() =
   paths.ensureDirsExist()
 
   # Invariant 1: uing before SDL.
   uing.init()
+
+  # After uing.init(), which is what creates NSApp: the alert below is an
+  # NSAlert and there is no application object before that point. Before
+  # bx1Create, which would otherwise build a machine with no ROM in it.
+  if not iplRomPresent():
+    reportMissingRom()
+    quit 1
+
   if not sdl2.init(INIT_VIDEO or INIT_AUDIO or INIT_EVENTS):
     fail "SDL_Init failed: " & $getError()
 
