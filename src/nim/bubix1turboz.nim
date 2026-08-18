@@ -219,6 +219,28 @@ const FullSpeedBatchMs = 8'u32
   ## flags again. Long enough that the per-pass overhead is negligible,
   ## short enough that turning Full Speed off feels immediate.
 
+proc yieldToUi(): bool =
+  ## Stands aside for a millisecond if the application's thread is holding
+  ## the VM lock or waiting for it, and says whether it did.
+  ##
+  ## Called only from between frames, where this thread holds no lock of
+  ## its own, so everyone `bx1VmLockUsers` counts is someone else. The
+  ## point is that the lock is a plain pthread mutex and not fair: with
+  ## nothing but `bx1RunFrame` in the way - Full Speed unlocks and relocks
+  ## a few hundred thousand times a second - the waiting thread was
+  ## measured stuck for the better part of a second at a time, which is
+  ## the whole of the UI (menus, input, drawing) not responding. Sleeping
+  ## here rather than merely yielding is what actually hands the lock over:
+  ## a yield leaves this thread runnable and it wins the race again.
+  ##
+  ## Only the Full Speed pass needs this. The audio-clock loop below stops
+  ## on the ring buffer every few frames anyway, and it is the path with a
+  ## real-time deadline to keep - a millisecond given away there comes out
+  ## of the audio the device is about to ask for.
+  result = bx1VmLockUsers() > 0
+  if result:
+    delay(1)
+
 proc emulationLoop() {.thread.} =
   ## Advances the machine, and nothing else. Drawing, the event pump and
   ## every menu action stay on the application's own thread.
@@ -248,6 +270,8 @@ proc emulationLoop() {.thread.} =
       let batchEnd = getTicks() + FullSpeedBatchMs
       var guardCount = 0
       while getTicks() < batchEnd and not parkRequested.load(moRelaxed):
+        if yieldToUi():
+          break
         if bx1RunFrame(emuHandle) > 0 and drawPending.exchange(false, moRelaxed):
           bx1DrawScreen(emuHandle)
         inc guardCount
@@ -396,8 +420,10 @@ proc main() =
       afterReset()
   # Full Speed is a host-loop concept, not a core setting: config.full_speed
   # has no reader anywhere in the vendored core (the original's winmain.cpp
-  # is the only thing that reads it). It still round-trips through the core's
-  # config so it persists in config.ini like the original's does.
+  # is the only thing that reads it), and config.cpp does not save or load
+  # it either. It is still kept there so that the core holds one copy of
+  # the setting rather than this layer holding a second one; every launch
+  # starts with it off.
   setFullSpeed(false)
   # Set once the Control menu exists, so the status timer can re-sync the
   # one setting the core clears behind our back (see below).
@@ -1956,6 +1982,10 @@ proc main() =
   # number of milliseconds - hence a float accumulator rather than an
   # integer interval, so the error does not compound into visible drift.
   const FrameIntervalMs = 1000.0 / 61.94
+  const FullSpeedDrawIntervalMs = 100.0
+    ## Ten pictures a second while Full Speed is on: enough for the user to
+    ## follow what the machine is doing, few enough that the emulation
+    ## thread keeps the lock nearly all of the time.
   var nextDrawTicks = lastFpsTicks.float
 
   proc drawFrame() =
@@ -2131,13 +2161,14 @@ proc main() =
     # VM is paced by the DirectSound cursor while WM_PAINT redraws on a
     # timer of its own.
     #
-    # Full Speed draws about once per emulated second instead. The point of
-    # it is to give the machine every cycle the host has, and each present
-    # takes the VM lock away from the emulation thread for the length of a
-    # draw_screen - which at 62Hz is a toll worth paying only when what is
-    # on screen is what the user is watching.
+    # Full Speed draws less often, because the point of it is to give the
+    # machine every cycle the host has and each present costs the
+    # emulation thread its turn at the VM lock. Not much less often,
+    # though: at one draw a second the picture is indistinguishable from a
+    # frozen one, and Full Speed is something the user watches to see how
+    # far the machine has got.
     let drawInterval =
-      if fullSpeed(): 1000.0
+      if fullSpeed(): FullSpeedDrawIntervalMs
       else: FrameIntervalMs
     let frameTicks = getTicks()
     # The next draw is resynced whenever it is more than one interval away

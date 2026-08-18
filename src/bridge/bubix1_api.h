@@ -60,6 +60,16 @@ int bx1_run_frame(bx1_handle h);
 void bx1_draw_screen(bx1_handle h);
 void bx1_lock(bx1_handle h);
 void bx1_unlock(bx1_handle h);
+/// How many threads are inside the VM lock or waiting for it, counting
+/// both the explicit bx1_lock() pair above and the lock every other call
+/// here takes for itself.
+///
+/// For a caller that holds no lock of its own, a non-zero answer means
+/// another thread wants the machine. The emulation thread reads it that
+/// way between frames: the lock is not fair, so a loop that reacquires it
+/// without pause - Full Speed - would otherwise keep the UI thread
+/// waiting for hundreds of milliseconds at a time.
+int bx1_vm_lock_users(void);
 
 // ----------------------------------------------------------------------
 // Screen

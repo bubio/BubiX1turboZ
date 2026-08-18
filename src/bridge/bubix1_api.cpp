@@ -9,6 +9,8 @@
 
 #include "bubix1_api.h"
 
+#include <atomic>
+
 #include "../core/emu.h"
 #include "../core/config.h"
 #include "../core/common.h"
@@ -42,11 +44,30 @@ int vm_sound_type = 0;
 // (OSD::sound_mutex) and must never wait on a frame being emulated. Nor to
 // bx1_create / bx1_destroy, which run before the emulation thread starts
 // and after it has been joined, when there is no VM to share.
+//
+// Every acquisition is also counted, holders and waiters alike, so that
+// the emulation thread can tell when someone else wants the machine.
+// The mutex behind it is a plain pthread first-fit one and is not fair:
+// a thread that unlocks and immediately relocks in a tight loop - which
+// is exactly what the host's Full Speed pass does - can keep another
+// thread waiting on it for hundreds of milliseconds at a time. The count
+// gives that loop something to look at so it can stand aside instead;
+// see bx1_vm_lock_users().
+std::atomic<int> vm_lock_users(0);
+
 struct vm_lock
 {
 	EMU* emu;
-	explicit vm_lock(bx1_handle h) : emu(emu_of(h)) { emu->lock_vm(); }
-	~vm_lock() { emu->unlock_vm(); }
+	explicit vm_lock(bx1_handle h) : emu(emu_of(h))
+	{
+		vm_lock_users.fetch_add(1, std::memory_order_relaxed);
+		emu->lock_vm();
+	}
+	~vm_lock()
+	{
+		emu->unlock_vm();
+		vm_lock_users.fetch_sub(1, std::memory_order_relaxed);
+	}
 	vm_lock(const vm_lock&) = delete;
 	vm_lock& operator=(const vm_lock&) = delete;
 };
@@ -138,12 +159,19 @@ void bx1_draw_screen(bx1_handle h)
 
 void bx1_lock(bx1_handle h)
 {
+	vm_lock_users.fetch_add(1, std::memory_order_relaxed);
 	emu_of(h)->lock_vm();
 }
 
 void bx1_unlock(bx1_handle h)
 {
 	emu_of(h)->unlock_vm();
+	vm_lock_users.fetch_sub(1, std::memory_order_relaxed);
+}
+
+int bx1_vm_lock_users(void)
+{
+	return vm_lock_users.load(std::memory_order_relaxed);
 }
 
 const uint32_t* bx1_get_framebuffer(bx1_handle h)

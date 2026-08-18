@@ -32,6 +32,13 @@ proc bx1Lock*(h: Bx1Handle) {.importc: "bx1_lock", bx1.}
   ## the ones this applies to.
 proc bx1Unlock*(h: Bx1Handle) {.importc: "bx1_unlock", bx1.}
 
+proc bx1VmLockUsers*(): cint {.importc: "bx1_vm_lock_users", bx1.}
+  ## How many threads hold the VM lock or are waiting for it. Read by the
+  ## emulation thread between frames, where it holds nothing itself, so a
+  ## non-zero answer means the application's thread wants the machine and
+  ## this one should stand aside - the lock is not fair, and a loop that
+  ## reacquires it without pause would starve the UI.
+
 proc bx1GetFramebuffer*(h: Bx1Handle): ptr UncheckedArray[uint32]
   {.importc: "bx1_get_framebuffer", bx1.}
   ## Valid only while the VM lock is held; see `bx1Lock`.
