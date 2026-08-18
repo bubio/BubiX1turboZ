@@ -37,6 +37,13 @@
 void OSD::update_sound(int* extra_frames)
 {
 	*extra_frames = 0;
+	// Mute is for one chunk only, exactly as in win32's OSD (which clears
+	// it here too, osd_sound.cpp:101): mute_sound() drops what is already
+	// queued and silences whatever is in flight, and the next chunk is
+	// audible again. Clearing before the early returns below matters -
+	// leaving it set while the ring happens to be full would latch the
+	// machine silent for the rest of the session.
+	sound_muted = false;
 	if(!sound_available) {
 		return;
 	}
@@ -107,6 +114,14 @@ int OSD::get_buffered_sound_frames()
 
 void OSD::mute_sound()
 {
+	// Throw away the audio still queued, which is what win32 does by
+	// zeroing its DirectSound buffer here. Callers reach for this after
+	// replacing the machine underneath the sound (a state load), where
+	// what is already in the ring belongs to a machine that no longer
+	// exists.
+	pthread_mutex_lock(&sound_mutex);
+	sound_ring_head = sound_ring_count = 0;
+	pthread_mutex_unlock(&sound_mutex);
 	sound_muted = true;
 }
 

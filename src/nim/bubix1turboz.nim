@@ -167,6 +167,11 @@ var
     ## Set by the application's thread when it wants a fresh picture, and
     ## acted on by the emulation thread at its next frame boundary. See
     ## `emulationLoop` for why the rendering cannot happen anywhere else.
+  parkRequested: Atomic[bool]
+    ## Asks the emulation thread to stop advancing the machine and wait.
+    ## Set only through `withMachineParked` below.
+  parked: Atomic[bool]
+    ## The emulation thread's answer: it is out of the core and idling.
   emuThread: Thread[void]
 
 proc running(): bool = runningFlag.load(moRelaxed)
@@ -175,6 +180,38 @@ proc setRunning(value: bool) = runningFlag.store(value, moRelaxed)
 
 proc fullSpeed(): bool = fullSpeedFlag.load(moRelaxed)
 proc setFullSpeed(value: bool) = fullSpeedFlag.store(value, moRelaxed)
+
+const ParkWaitMs = 500'u32
+  ## How long to wait for the emulation thread to acknowledge a park before
+  ## going ahead regardless. Generously above the few milliseconds it takes
+  ## to finish the pass it is in.
+
+template withMachineParked(body: untyped) =
+  ## Runs `body` as the only thread driving the machine.
+  ##
+  ## The VM lock alone is not enough for this. It makes the two threads
+  ## take turns, which is right for a single call but not for a sequence
+  ## that has to be one indivisible step - a state load is settings, then
+  ## remounts, then the state blob on top, and a frame emulated between
+  ## any two of those is a frame the machine should never have run. It
+  ## also lets this thread call `bx1RunFrame` itself (`restoreDrives`
+  ## needs to, to land the core's deferred disk inserts) without the
+  ## emulation thread driving `EMU::run` at the same time.
+  parkRequested.store(true, moRelaxed)
+  # `emuThread.running` covers the window before the thread exists at all,
+  # and the deadline covers the emulation thread being stuck inside the
+  # core: the point of parking is to keep a sequence indivisible, which is
+  # never worth freezing the application's own thread over. Going ahead
+  # without the acknowledgement loses that guarantee but nothing else -
+  # every bx1_* call still takes the VM lock.
+  let parkDeadline = getTicks() + ParkWaitMs
+  while running() and emuThread.running and getTicks() < parkDeadline and
+        not parked.load(moAcquire):
+    delay(1)
+  try:
+    body
+  finally:
+    parkRequested.store(false, moRelaxed)
 
 
 const FullSpeedBatchMs = 8'u32
@@ -195,6 +232,14 @@ proc emulationLoop() {.thread.} =
   ## Nothing here allocates: this thread never touches a Nim string, seq or
   ## ref, only the flags above and the C bridge.
   while running():
+    if parkRequested.load(moRelaxed):
+      # Out of the core and staying out until the application's thread is
+      # done with the machine; see `withMachineParked`.
+      parked.store(true, moRelease)
+      while running() and parkRequested.load(moRelaxed):
+        delay(1)
+      parked.store(false, moRelaxed)
+      continue
     if fullSpeed():
       # Full Speed is not "run the VM faster" as such - it is the original
       # app's frame-skip path, which stops advancing the frame-interval
@@ -202,7 +247,7 @@ proc emulationLoop() {.thread.} =
       # switching it off is noticed promptly.
       let batchEnd = getTicks() + FullSpeedBatchMs
       var guardCount = 0
-      while getTicks() < batchEnd:
+      while getTicks() < batchEnd and not parkRequested.load(moRelaxed):
         if bx1RunFrame(emuHandle) > 0 and drawPending.exchange(false, moRelaxed):
           bx1DrawScreen(emuHandle)
         inc guardCount
@@ -210,7 +255,8 @@ proc emulationLoop() {.thread.} =
           break
     else:
       var guardCount = 0
-      while running() and bx1GetBufferedAudioFrames(emuHandle) < emuTargetFrames:
+      while running() and not parkRequested.load(moRelaxed) and
+            bx1GetBufferedAudioFrames(emuHandle) < emuTargetFrames:
         if bx1RunFrame(emuHandle) > 0 and drawPending.exchange(false, moRelaxed):
           bx1DrawScreen(emuHandle)
         inc guardCount
@@ -901,11 +947,21 @@ proc main() =
   proc saveStateTo(path: string) =
     createDir paths.scratchDir() # $TMPDIR can be reaped under a long session
     let blob = scratch("save.vmst")
-    if bx1VmStateSave(h, blob.cstring) == 0:
+    # Both halves of the snapshot come from a machine that is standing
+    # still, so the thumbnail is the picture of the frame the state was
+    # taken at rather than of whatever the emulation thread has reached by
+    # the time the PNG is encoded.
+    var captured = false
+    var thumbnail: seq[byte]
+    withMachineParked:
+      captured = bx1VmStateSave(h, blob.cstring) != 0
+      if captured:
+        thumbnail = thumbnailPng()
+    if not captured:
       filedialog.message(tr(msgSaveStateTitle), tr(msgStateCaptureFailed))
       return
     try:
-      savestate.save(path, blob, currentMeta(), thumbnailPng())
+      savestate.save(path, blob, currentMeta(), thumbnail)
     except CatchableError as e:
       filedialog.message(tr(msgSaveStateTitle), e.msg)
     finally:
@@ -1046,23 +1102,32 @@ proc main() =
       filedialog.message(tr(msgLoadStateTitle), e.msg)
       return
 
-    # The auto key would go on typing into the restored machine; the core's
-    # own load_state stops it for the same reason.
-    bx1StopAutoKey(h)
-    # Devices read these from the global config as they run rather than
-    # storing them in their state, so they have to be in place first.
-    bx1SetMonitorType(h, m.runtime.monitorType.cint)
-    bx1SetDriveType(h, m.runtime.driveType.cint)
-    for drv in 0 ..< FloppyDrives:
-      if drv < m.runtime.correctDiskTiming.len:
-        bx1SetCorrectDiskTiming(h, drv.cint, m.runtime.correctDiskTiming[drv].cint)
-      if drv < m.runtime.ignoreDiskCrc.len:
-        bx1SetIgnoreDiskCrc(h, drv.cint, m.runtime.ignoreDiskCrc[drv].cint)
-    let warning = restoreDrives(m)
-    let applied =
-      bx1VmStateLoad(h, blob.cstring, scratch("rollback.vmst").cstring) != 0
-    removeFile(blob)
-    bx1MuteSound(h)
+    # From here the machine is this thread's alone: the settings, the
+    # remounts and the state blob have to land as one step, and
+    # restoreDrives runs frames itself, which the emulation thread must
+    # not be doing at the same time.
+    var warning = ""
+    var applied = false
+    withMachineParked:
+      # The auto key would go on typing into the restored machine; the
+      # core's own load_state stops it for the same reason.
+      bx1StopAutoKey(h)
+      # Devices read these from the global config as they run rather than
+      # storing them in their state, so they have to be in place first.
+      bx1SetMonitorType(h, m.runtime.monitorType.cint)
+      bx1SetDriveType(h, m.runtime.driveType.cint)
+      for drv in 0 ..< FloppyDrives:
+        if drv < m.runtime.correctDiskTiming.len:
+          bx1SetCorrectDiskTiming(h, drv.cint, m.runtime.correctDiskTiming[drv].cint)
+        if drv < m.runtime.ignoreDiskCrc.len:
+          bx1SetIgnoreDiskCrc(h, drv.cint, m.runtime.ignoreDiskCrc[drv].cint)
+      warning = restoreDrives(m)
+      applied =
+        bx1VmStateLoad(h, blob.cstring, scratch("rollback.vmst").cstring) != 0
+      removeFile(blob)
+      # What is still queued was produced by the machine this state has
+      # just replaced, so it belongs to nothing any more.
+      bx1MuteSound(h)
     refreshFloppyMenus()
     if not applied:
       # The VM state itself rolled back inside the bridge, but the mounts
@@ -1079,11 +1144,14 @@ proc main() =
       filedialog.message(tr(msgLoadStateTitle), warning)
 
   proc pickSlot(forSaving: bool): int =
-    ## Runs the slot grid. The emulation loop is stopped for as long as it
-    ## is up - which, unlike a file dialog, is however long it takes to
-    ## look at ten screenshots - so the audio the machine could not produce
-    ## meanwhile is dropped on the way out. Without that the loop comes
-    ## back chasing a sound clock that ran on without it.
+    ## Runs the slot grid.
+    ##
+    ## Nothing is done to the sound on the way out. It used to drop what
+    ## the ring held, from when the machine ran on this thread and so
+    ## stood still for as long as the picker was up; the machine has a
+    ## thread of its own now and keeps playing behind the picker, so there
+    ## is nothing stale to drop - and dropping it silenced an ordinary
+    ## Save State.
     var cells: seq[SlotCell]
     for slot in 0 ..< StateSlots:
       let info = slotInfo(slot)
@@ -1111,7 +1179,6 @@ proc main() =
       cells.add cell
     result = statepicker.choose(
       tr(if forSaving: msgSaveStateTitle else: msgLoadStateTitle), cells)
-    bx1MuteSound(h)
 
   controlMenu.addItem(tr(msgQuickSave), proc () =
     saveStateTo(paths.stateSlotPath(QuickSlot)), key = "s")
