@@ -1336,39 +1336,30 @@ int DISPLAY::get_zpal_num(uint32_t addr, uint32_t data)
 {
 	int num = ((data >> 4) & 0x0f) | ((addr << 4) & 0xff0);
 	
-#if 1
-	if(hireso) {
-		if(!column40) {
-			// 8 colors (use asic palette ram)
-			num &= 0x888;
-			num |= num >> 1;
-			num |= num >> 2;
-		} else {
-			// 64 colors (single set)
-			num &= 0xccc;
-			num |= num >> 2;
-		}
-	} else {
-		if(!column40 || C64) {
+	// BubiX1turboZ: the analog (AEN) drawing path exists only in 200 lines /
+	// 40 columns - see draw_cg(), which sets aen_line[] under
+	// "AEN && !hireso && column40". Every other mode is drawn through
+	// zpalette_pc[8..15], which update_zpalette() aliases to the eight
+	// zpal[] corners 0x000/0x00f/0x0f0/0x0ff/0xf00/0xf0f/0xff0/0xfff. So a
+	// palette write outside the analog modes has to be folded onto those
+	// corners (the ASIC's 8 colour palette RAM); the 0xccc mask can never
+	// reach them, which left seven of the eight graphics colours stuck at
+	// the identity values initialize() fills zpal[] with.
+	if(!hireso && column40) {
+		if(C64) {
 			// 64 colors (dual set)
 			num &= 0xccc;  // BANK0 GRAM
-			if(C64 && (mode1 & 0x10)) {
+			if(mode1 & 0x10) {
 				num >>=2;  // BANK1 GRAM
 			}
 		}
-	}
-#else
-	if(hireso && !column40) {
-		// 8 colors
+		// else: 4096 colors, the raw slot number is the entry
+	} else {
+		// 8 colors (use asic palette ram)
 		num &= 0x888;
 		num |= num >> 1;
 		num |= num >> 2;
-	} else if(!(!hireso && column40 && !C64)) {
-		// 64 colors
-		num &= 0xccc;
-		num |= num >> 2;
 	}
-#endif
 	return num;
 }
 
