@@ -56,7 +56,14 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources" "$CONTENTS/Frameworks"
 ./scripts/build_nim_app.sh "$CONTENTS/MacOS/$APP_NAME" '@executable_path/../Frameworks'
 
 ditto build/frameworks/SDL2.framework "$CONTENTS/Frameworks/SDL2.framework"
-cp assets/$APP_NAME.icns "$CONTENTS/Resources/$APP_NAME.icns"
+# The icon and the accent colour both live in the compiled asset catalog,
+# which scripts/make_icon.sh produces and the repository carries, so no part
+# of a build needs Xcode. macOS 26 draws the icon from Assets.car - given
+# only the .icns it wraps the artwork in a light tile of its own, which is
+# the padding a legacy icon shows at small sizes in the Finder - while
+# earlier releases take the .icns. Both are copied; Info.plist names both.
+cp assets/Assets.car "$CONTENTS/Resources/Assets.car"
+cp assets/AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"
 
 # The app's own strings come from its Nim catalog (src/nim/bubix1/i18n.nim),
 # but the words AppKit supplies - the Open/Save panel buttons, the standard
@@ -74,38 +81,6 @@ for LANG_CODE in en ja; do
    as present so AppKit uses its own strings in this language. */
 STRINGS
 done
-
-# The app's tint colour. macOS takes it from a compiled asset catalog named
-# by NSAccentColorName and nowhere else - there is no API to set one at run
-# time - so it is the asset catalog or nothing. Every standard control
-# picks it up from there: sliders, checkboxes, default buttons, focus
-# rings.
-#
-# actool ships with Xcode, not with the Command Line Tools, so a build on a
-# machine with only the CLT installed carries on without the catalog and
-# the app simply follows the system accent colour. That must not silently
-# leave NSAccentColorName pointing at an asset that is not there, hence the
-# key is added only when the catalog was actually compiled.
-ACCENT_PLIST_ENTRY=""
-if xcrun --find actool >/dev/null 2>&1; then
-  # actool insists on writing the partial plist it would hand to an Xcode
-  # build; the keys in it are the two lines added below, so it is written
-  # somewhere disposable and deleted.
-  ACTOOL_PLIST="$(mktemp -t bubix1-actool)"
-  xcrun actool assets/Assets.xcassets \
-    --compile "$CONTENTS/Resources" \
-    --platform macosx \
-    --minimum-deployment-target "$MIN_MACOS" \
-    --accent-color AccentColor \
-    --output-partial-info-plist "$ACTOOL_PLIST" \
-    > /dev/null
-  rm -f "$ACTOOL_PLIST"
-  ACCENT_PLIST_ENTRY=$'\t<key>NSAccentColorName</key>\n\t<string>AccentColor</string>'
-  echo "compiled asset catalog (accent colour)"
-else
-  echo "warning: actool not found (Xcode not installed) -" \
-       "building without the app's accent colour" >&2
-fi
 
 # CFBundleDocumentTypes is deliberately absent - a decision now, not a gap.
 # It could work: opening a document from the Finder arrives as an Apple
@@ -130,7 +105,9 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 	<key>CFBundleExecutable</key>
 	<string>$APP_NAME</string>
 	<key>CFBundleIconFile</key>
-	<string>$APP_NAME</string>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>$BUNDLE_ID</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -147,7 +124,8 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 	<string>public.app-category.games</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$MIN_MACOS</string>
-$ACCENT_PLIST_ENTRY
+	<key>NSAccentColorName</key>
+	<string>AccentColor</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>

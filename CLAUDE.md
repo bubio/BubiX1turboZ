@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `scripts/build_app_macos_dev.sh` — 開発用。`build/BubiX1turboZ` を作る（バンドル無し）
 - `scripts/build_macos.sh [--dmg] [--skip-core]` — リリース用。`build/BubiX1turboZ.app` と dmg を作る。CI が実行するのもこれ
 - `scripts/check_other_platforms.sh` — Linux / Windows 向けに `nim check` を走らせ、`src/nim/bubix1/ui/` の外にプラットフォーム依存コードが漏れていないか検査する。macOS のビルドでは検証されない分岐が腐るのを防ぐためのもの
-- `scripts/make_icon.sh` — `assets/BubiX1turboZ.png`（原画）から `assets/BubiX1turboZ.icns` を再生成。アイコンを変えるときだけ実行（ビルドからは呼ばれない）
+- `scripts/make_icon.sh` — `assets/AppIcon.icon`（Icon Composer 文書。原画はその `Assets/` 内）と `assets/Assets.xcassets` から `assets/Assets.car` と `assets/AppIcon.icns` を再生成。この 2 つはコミット済みなのでビルドにも CI にも Xcode は要らない。アイコンかアクセントカラーを変えるときだけ実行（ビルドからは呼ばれない。要 Xcode）
 - `scripts/apply_core_patches.sh [--check]` — `patches/` にある、vendored コア（`src/core/`）への修正パッチを適用する。**コアを上流から再取り込みしたら必ず実行すること**（再 vendor でパッチは黙って消える）。冪等。詳細は `patches/README.md`
 
 現時点の構成:

@@ -83,15 +83,18 @@ jobs:
           ./scripts/build_macos.sh
         fi
 
-    # The build script skips the accent colour when actool is absent, which
-    # is right for a local Command Line Tools install but wrong for a
-    # release: a runner without Xcode would otherwise ship a dmg missing
-    # the app's tint colour and nothing would go red.
-    - name: Verify accent colour was embedded
+    # The icon and the tint colour both come from the committed asset
+    # catalog. Losing it costs no build step and would go unnoticed
+    # otherwise - the app still builds, it just ships with the wrong icon
+    # at small sizes and the system tint colour.
+    - name: Verify asset catalog was embedded
       run: |
         test -f build/BubiX1turboZ.app/Contents/Resources/Assets.car
+        test -f build/BubiX1turboZ.app/Contents/Resources/AppIcon.icns
         plutil -p build/BubiX1turboZ.app/Contents/Info.plist \
           | grep -q NSAccentColorName
+        plutil -p build/BubiX1turboZ.app/Contents/Info.plist \
+          | grep -q CFBundleIconName
 
     - name: Package .app (zip)
       if: github.event_name != 'release'
