@@ -6,14 +6,13 @@
 	with a translucent bar along the bottom carrying the slot number, the
 	time it was taken, and what was in the drives. This is that, in AppKit.
 
-	A window of its own, run app-modal and centred, rather than a sheet on
-	the emulator window the way filedialog.m now runs its panels: at
-	580x520 this is taller than that window is at the scales most people
-	use it at, and a sheet that overflows its parent is worse than a
-	dialog that never claimed to belong to it. The modal session is still
-	NSApp's own, the one path proven not to leave NSApp believing a modal
-	is still live (see the make_menu comment in nativemenu.m for what that
-	looks like when it goes wrong).
+	A window of its own rather than an NSAlert with an accessory view, put
+	on screen by filedialog.m's bx1_dialog_run_window - as a sheet on the
+	emulator window, or centred and app-modal when there is none to hang
+	one from. The modal session is NSApp's own either way, the one path
+	proven not to leave NSApp believing a modal is still live (see the
+	make_menu comment in nativemenu.m for what that looks like when it
+	goes wrong).
 */
 
 #import <Cocoa/Cocoa.h>
@@ -28,11 +27,25 @@
 */
 extern NSString *bx1_ns_string(const char *bytes);
 
+/*
+	Defined in filedialog.m, which owns how every dialog in this app is put
+	on screen - as a sheet on the emulator window, or app-modal when there
+	is none to hang one from.
+*/
+extern NSModalResponse bx1_dialog_run_window(NSWindow *window);
+
+// The window that will be, so the grid can size itself to fit it. nil when
+// there is none and bx1_dialog_run_window will fall back to app-modal.
+extern NSWindow *bx1_dialog_parent_window(void);
+
 // Window and cell geometry, following Bubilator88's sheet: 580x520 with
 // two columns of cells. Each cell is 8:5 like the emulated screen, so a
 // 320x200 thumbnail lands in it without letterboxing.
 static const CGFloat WindowWidth = 580.0;
 static const CGFloat WindowHeight = 520.0;
+// Two rows of cells still showing, which is what stops the clamp below
+// from shrinking the grid into a slit on a small emulator window.
+static const CGFloat MinWindowHeight = 380.0;
 static const CGFloat HeaderHeight = 48.0;
 static const CGFloat FooterHeight = 52.0;
 static const CGFloat Margin = 16.0;
@@ -195,13 +208,10 @@ static NSTextField *heading(NSRect frame, NSString *text)
 	Load side presents an empty slot (Bubilator88 does the same rather than
 	hiding it - the slot number is half the point of the grid).
 
-	A window of its own rather than an NSAlert: an alert insists on showing
-	the application icon, and centres a lone button instead of putting it
-	where a dialog's Cancel belongs. Bubilator88's sheet is a title, a
-	divider, the grid, a divider, and Cancel on the right - which is what
-	this builds. The modal session is still NSApp's own (runModalForWindow:
-	/ stopModal), the one this app has verified does not leave the menu bar
-	disabled behind it.
+	Not an NSAlert: an alert insists on showing the application icon, and
+	centres a lone button instead of putting it where a dialog's Cancel
+	belongs. Bubilator88's sheet is a title, a divider, the grid, a
+	divider, and Cancel on the right - which is what this builds.
 */
 int bx1_state_picker(const char *title, const bx1_state_slot *slots, int count,
                      const char *cancel_label, const char *empty_label)
@@ -214,10 +224,16 @@ int bx1_state_picker(const char *title, const bx1_state_slot *slots, int count,
 		NSScrollView *scroll;
 		NSButton *cancel;
 		NSView *content;
-		NSRect frame = NSMakeRect(0.0, 0.0, WindowWidth, WindowHeight);
+		// A sheet taller than the window it hangs from spills past the
+		// bottom of it, which the 640x400 the emulator runs at by default
+		// is short enough for. The grid scrolls, so giving up height costs
+		// visible rows and nothing else.
+		NSWindow *parent = bx1_dialog_parent_window();
+		CGFloat windowHeight = WindowHeight;
+		NSRect frame;
 		CGFloat gridWidth = Columns * (CellWidth + CellGap) + CellGap;
 		CGFloat gridBottom = FooterHeight;
-		CGFloat gridHeight = WindowHeight - HeaderHeight - FooterHeight;
+		CGFloat gridHeight;
 		CGFloat contentHeight;
 		NSModalResponse response;
 		int i;
@@ -225,6 +241,15 @@ int bx1_state_picker(const char *title, const bx1_state_slot *slots, int count,
 		if (slots == NULL || count <= 0) {
 			return -1;
 		}
+		if (parent != nil) {
+			CGFloat available = NSHeight([[parent contentView] frame]);
+
+			if (available < windowHeight) {
+				windowHeight = MAX(available, MinWindowHeight);
+			}
+		}
+		frame = NSMakeRect(0.0, 0.0, WindowWidth, windowHeight);
+		gridHeight = windowHeight - HeaderHeight - FooterHeight;
 
 		target = [[[Bx1StatePickerTarget alloc] init] autorelease];
 		[target setPicked:-1];
@@ -275,10 +300,10 @@ int bx1_state_picker(const char *title, const bx1_state_slot *slots, int count,
 		[cancel setAction:@selector(cancel:)];
 
 		root = [[[NSView alloc] initWithFrame:frame] autorelease];
-		[root addSubview:heading(NSMakeRect(0.0, WindowHeight - HeaderHeight + 14.0,
+		[root addSubview:heading(NSMakeRect(0.0, windowHeight - HeaderHeight + 14.0,
 		                                    WindowWidth, 20.0),
 		                         bx1_ns_string(title))];
-		[root addSubview:divider(NSMakeRect(0.0, WindowHeight - HeaderHeight,
+		[root addSubview:divider(NSMakeRect(0.0, windowHeight - HeaderHeight,
 		                                    WindowWidth, 1.0))];
 		[root addSubview:scroll];
 		[root addSubview:divider(NSMakeRect(0.0, FooterHeight, WindowWidth, 1.0))];
@@ -289,15 +314,13 @@ int bx1_state_picker(const char *title, const bx1_state_slot *slots, int count,
 			          styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskFullSizeContentView
 			            backing:NSBackingStoreBuffered
 			              defer:NO];
-		// A sheet has no title bar; this is the closest a standalone window
-		// gets, and it keeps the whole top edge draggable.
+		// A sheet draws no title bar of its own; these keep the window
+		// looking the same in the app-modal fallback, where it does.
 		[window setTitlebarAppearsTransparent:YES];
 		[window setTitleVisibility:NSWindowTitleHidden];
 		[window setContentView:root];
-		[window center];
 
-		response = [NSApp runModalForWindow:window];
-		[window orderOut:nil];
+		response = bx1_dialog_run_window(window);
 		[window release];
 
 		if (response != PickedResponse) {

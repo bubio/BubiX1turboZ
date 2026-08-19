@@ -128,6 +128,39 @@ static NSModalResponse run_alert(NSAlert *alert)
 	return answer;
 }
 
+/*
+	Runs a window of the app's own as a sheet on the emulator window, or
+	centred and app-modal when there is none. It ends when something in the
+	window calls -[NSApplication stopModalWithCode:], and that code is what
+	comes back; the window is off screen again on return.
+
+	Here rather than beside its one caller (statepicker.m) so that the guard
+	above counts every dialog this app can open, not just the ones declared
+	in this file.
+*/
+NSModalResponse bx1_dialog_run_window(NSWindow *window)
+{
+	NSWindow *parent;
+	NSModalResponse answer;
+
+	if (dialog_running) {
+		return NSModalResponseCancel;
+	}
+	dialog_running = YES;
+	parent = bx1_dialog_parent_window();
+	if (parent == nil) {
+		[window center];
+		answer = [NSApp runModalForWindow:window];
+		[window orderOut:nil];
+	} else {
+		[parent beginSheet:window completionHandler:nil];
+		answer = [NSApp runModalForWindow:window];
+		[parent endSheet:window];
+	}
+	dialog_running = NO;
+	return answer;
+}
+
 // The caller owns the returned string and must free it with
 // bx1_dialog_free(). NULL means the user cancelled.
 static char *copy_path(NSURL *url)
