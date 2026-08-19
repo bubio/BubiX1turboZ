@@ -6,12 +6,14 @@
 	with a translucent bar along the bottom carrying the slot number, the
 	time it was taken, and what was in the drives. This is that, in AppKit.
 
-	Built on NSAlert with an accessory view rather than as a window of its
-	own, for the reason filedialog.m gives at length: the emulator's window
-	belongs to SDL, so there is nothing of this app's own to hang a sheet
-	on, and NSAlert's app-modal session is the one path already proven not
-	to leave NSApp believing a modal is still live (see the make_menu
-	comment in nativemenu.m for what that looks like when it goes wrong).
+	A window of its own, run app-modal and centred, rather than a sheet on
+	the emulator window the way filedialog.m now runs its panels: at
+	580x520 this is taller than that window is at the scales most people
+	use it at, and a sheet that overflows its parent is worse than a
+	dialog that never claimed to belong to it. The modal session is still
+	NSApp's own, the one path proven not to leave NSApp believing a modal
+	is still live (see the make_menu comment in nativemenu.m for what that
+	looks like when it goes wrong).
 */
 
 #import <Cocoa/Cocoa.h>

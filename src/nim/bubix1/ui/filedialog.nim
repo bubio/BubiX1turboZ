@@ -22,6 +22,14 @@ const
     ## exposed again.
   BlankDiskExtensions* = "d88"
 
+proc setParentWindow*(window: pointer) =
+  ## Tells the backend which window the dialogs belong to, as the
+  ## `SDL_Window*` the application draws in. macOS opens them as sheets on
+  ## it; a backend with no use for the answer ignores it. Call once the
+  ## window is on screen - before that, and after it is gone, the dialogs
+  ## fall back to standing on their own.
+  backend.setParentWindow(window)
+
 proc openFile*(extensions = ""): string =
   ## Empty string means the user cancelled.
   backend.openFile(extensions)

@@ -1,19 +1,132 @@
 /*
 	BubiX1turboZ - native open/save panels and alerts.
 
-	The panels run app-modal rather than as a sheet. A sheet needs a parent
-	window and the only window this app has belongs to SDL, which is not
-	something to hang the app's own dialogs off; app-modal is also where
-	macOS puts an Open panel that belongs to the application rather than to
-	a document.
+	The panels hang off the emulator's window as sheets. That window is
+	SDL's rather than one this app made for itself, so the Nim side
+	registers it here once it exists (bx1_dialog_set_parent) and SDL_syswm
+	turns the handle into the NSWindow AppKit wants; nothing else in this
+	file knows about SDL. With no window to attach to - the state
+	bx1_dialog_missing_rom runs in, since it is shown before the emulator
+	window is created - every dialog here falls back to app-modal.
 
-	Running them this way keeps NSApp's modal-session bookkeeping honest,
-	which matters more than it sounds: a session left half-open makes
-	Cocoa's automatic menu validation disable the entire menu bar afterwards
-	(see the make_menu comment in nativemenu.m).
+	A sheet is asynchronous where the rest of this app is not: each
+	function below returns the user's answer, and the Nim facade they back
+	is shaped that way for its Linux and Windows siblings too. So the sheet
+	is begun and then a nested modal session runs until the completion
+	handler stops it, which keeps the call synchronous.
+
+	That session is NSApp's own (runModalForWindow: / stopModalWithCode:),
+	the one path this app has verified it can open and close cleanly: a
+	session left half-open makes Cocoa's automatic menu validation disable
+	the entire menu bar afterwards (see the make_menu comment in
+	nativemenu.m).
 */
 
 #import <Cocoa/Cocoa.h>
+#include <SDL.h>
+#include <SDL_syswm.h>
+
+// The emulator window, as SDL knows it. NULL until the Nim side registers
+// it, which it does as soon as the window is on screen.
+static SDL_Window *emulator_window = NULL;
+
+void bx1_dialog_set_parent(void *window)
+{
+	emulator_window = (SDL_Window *)window;
+}
+
+/*
+	The window a sheet should hang from, or nil when there is none to use.
+
+	Deliberately not [NSApp mainWindow]: the volume panel is a window of
+	this app's own and can be the main one, and a file panel that opened
+	as a sheet on the volume slider would be attached to the wrong thing
+	entirely. Asking SDL names the emulator window and only that.
+*/
+NSWindow *bx1_dialog_parent_window(void)
+{
+	SDL_SysWMinfo info;
+	NSWindow *window;
+
+	if (emulator_window == NULL) {
+		return nil;
+	}
+	SDL_VERSION(&info.version);
+	if (!SDL_GetWindowWMInfo(emulator_window, &info)) {
+		return nil;
+	}
+	if (info.subsystem != SDL_SYSWM_COCOA) {
+		return nil;
+	}
+	window = info.info.cocoa.window;
+	// A sheet on a hidden or minimised window would be out of reach until
+	// the window came back, with the emulation loop blocked meanwhile.
+	if (window == nil || ![window isVisible] || [window isMiniaturized]) {
+		return nil;
+	}
+	return window;
+}
+
+/*
+	One dialog at a time. The modal session already stops a second menu
+	action from firing while one is up - which is what the app-modal
+	panels relied on too - but a sheet is queued rather than refused when
+	its parent already has one, and the nested session below would then be
+	waiting on a window that is not on screen yet. That is a hang, and it
+	costs two lines to rule out. Every caller treats the cancel answer as
+	"the user chose nothing", which is exactly what a swallowed request is.
+*/
+static BOOL dialog_running = NO;
+
+// Both runners below return what the dialog itself would have returned
+// app-modal, so their callers read the answer the same way either way.
+static NSModalResponse run_panel(NSSavePanel *panel)
+{
+	NSWindow *parent;
+	__block NSModalResponse answer = NSModalResponseCancel;
+
+	if (dialog_running) {
+		return NSModalResponseCancel;
+	}
+	dialog_running = YES;
+	parent = bx1_dialog_parent_window();
+	if (parent == nil) {
+		answer = [panel runModal];
+	} else {
+		[panel beginSheetModalForWindow:parent
+				  completionHandler:^(NSModalResponse response) {
+			answer = response;
+			[NSApp stopModalWithCode:response];
+		}];
+		[NSApp runModalForWindow:panel];
+	}
+	dialog_running = NO;
+	return answer;
+}
+
+static NSModalResponse run_alert(NSAlert *alert)
+{
+	NSWindow *parent;
+	__block NSModalResponse answer = NSModalResponseCancel;
+
+	if (dialog_running) {
+		return NSModalResponseCancel;
+	}
+	dialog_running = YES;
+	parent = bx1_dialog_parent_window();
+	if (parent == nil) {
+		answer = [alert runModal];
+	} else {
+		[alert beginSheetModalForWindow:parent
+				  completionHandler:^(NSModalResponse response) {
+			answer = response;
+			[NSApp stopModalWithCode:response];
+		}];
+		[NSApp runModalForWindow:[alert window]];
+	}
+	dialog_running = NO;
+	return answer;
+}
 
 // The caller owns the returned string and must free it with
 // bx1_dialog_free(). NULL means the user cancelled.
@@ -76,7 +189,7 @@ char *bx1_dialog_open_file(const char *extensions)
 		[panel setResolvesAliases:YES];
 		[panel setTreatsFilePackagesAsDirectories:YES];
 		set_allowed_types(panel, extensions);
-		if ([panel runModal] != NSModalResponseOK) {
+		if (run_panel(panel) != NSModalResponseOK) {
 			return NULL;
 		}
 		return copy_path([panel URL]);
@@ -94,7 +207,7 @@ char *bx1_dialog_save_file(const char *extensions, const char *suggested_name)
 		if (suggested_name != NULL && suggested_name[0] != '\0') {
 			[panel setNameFieldStringValue:[NSString stringWithUTF8String:suggested_name]];
 		}
-		if ([panel runModal] != NSModalResponseOK) {
+		if (run_panel(panel) != NSModalResponseOK) {
 			return NULL;
 		}
 		return copy_path([panel URL]);
@@ -124,7 +237,7 @@ char *bx1_dialog_choose_folder(const char *title, const char *prompt)
 		if (prompt != NULL && prompt[0] != '\0') {
 			[panel setPrompt:[NSString stringWithUTF8String:prompt]];
 		}
-		if ([panel runModal] != NSModalResponseOK) {
+		if (run_panel(panel) != NSModalResponseOK) {
 			return NULL;
 		}
 		return copy_path([panel URL]);
@@ -146,8 +259,8 @@ extern NSString *bx1_ns_string(const char *bytes);
 	named disks unreachable.
 
 	Returns the chosen row, or -1 if the user cancelled. A pop-up rather than
-	a table keeps this to an app-modal alert, matching the file panels above:
-	no parent window, no modal-session bookkeeping to get wrong.
+	a table keeps this to an NSAlert, which run_alert presents as a sheet on
+	the emulator window like the file panels above.
 
 	Both button titles arrive from the caller. This file is the macOS
 	backend of a UI meant to grow GTK and Win32 siblings, so the words it
@@ -181,7 +294,7 @@ int bx1_dialog_choose_disk(const char *title, const char *const *rows, int count
 		}
 		[alert setAccessoryView:popup];
 
-		if ([alert runModal] != NSAlertFirstButtonReturn) {
+		if (run_alert(alert) != NSAlertFirstButtonReturn) {
 			return -1;
 		}
 		return (int)[popup indexOfSelectedItem];
@@ -200,7 +313,7 @@ void bx1_dialog_message(const char *title, const char *body, const char *ok_labe
 		[alert setMessageText:bx1_ns_string(title)];
 		[alert setInformativeText:bx1_ns_string(body)];
 		[alert addButtonWithTitle:bx1_ns_string(ok_label)];
-		[alert runModal];
+		run_alert(alert);
 	}
 }
 
@@ -217,12 +330,15 @@ void bx1_dialog_message(const char *title, const char *body, const char *ok_labe
 	cannot start without the ROM - so this reports what happened rather
 	than asking the caller to act on it.
 
-	This one runs before the main loop, which the other dialogs here do not.
-	That is safe because SDL_Init has already registered the application:
-	it creates NSApp, sets the Regular activation policy an app needs to
-	show a window at all, and calls -finishLaunching. Without those an
-	alert never appears and the process simply sits in runModal with
-	nothing on screen, so this must not be called any earlier than that.
+	This one runs before the main loop, and before the emulator window
+	exists - so run_alert finds no window to hang a sheet on and shows it
+	app-modal, which is where an alert with nothing behind it belongs
+	anyway. That is safe because SDL_Init has already registered the
+	application: it creates NSApp, sets the Regular activation policy an
+	app needs to show a window at all, and calls -finishLaunching. Without
+	those an alert never appears and the process simply sits in its modal
+	session with nothing on screen, so this must not be called any earlier
+	than that.
 */
 int bx1_dialog_missing_rom(const char *title, const char *body, const char *folder,
                            const char *open_label, const char *quit_label)
@@ -244,7 +360,7 @@ int bx1_dialog_missing_rom(const char *title, const char *body, const char *fold
 		[alert addButtonWithTitle:bx1_ns_string(open_label)];
 		[alert addButtonWithTitle:bx1_ns_string(quit_label)];
 
-		if ([alert runModal] != NSAlertFirstButtonReturn) {
+		if (run_alert(alert) != NSAlertFirstButtonReturn) {
 			return 0;
 		}
 		if (folder == NULL || folder[0] == '\0') {

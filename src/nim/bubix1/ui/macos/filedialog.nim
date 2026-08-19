@@ -1,8 +1,7 @@
 ## AppKit backend for ui/filedialog.nim. See filedialog.m.
 ##
-## The panels run app-modal rather than as a sheet: the only window this
-## app has is SDL's, and a panel hanging off it is not where macOS puts
-## one.
+## The panels open as sheets on the emulator window, which the caller
+## hands over through `setParentWindow`; without one they run app-modal.
 ##
 ## The AppKit side draws no words of its own - every button title arrives
 ## from the facade, which took it from the message catalog.
@@ -10,6 +9,8 @@
 {.compile: "filedialog.m".}
 {.passL: "-framework Cocoa".}
 
+proc bx1DialogSetParent(window: pointer)
+  {.importc: "bx1_dialog_set_parent", cdecl.}
 proc bx1DialogOpenFile(extensions: cstring): cstring
   {.importc: "bx1_dialog_open_file", cdecl.}
 proc bx1DialogSaveFile(extensions, suggestedName: cstring): cstring
@@ -30,6 +31,10 @@ proc takeString(raw: cstring): string =
     return ""
   result = $raw
   bx1DialogFree(raw)
+
+proc setParentWindow*(window: pointer) =
+  ## `window` is the `SDL_Window*` the dialogs hang their sheets from.
+  bx1DialogSetParent(window)
 
 proc openFile*(extensions: string): string =
   takeString(bx1DialogOpenFile(extensions.cstring))

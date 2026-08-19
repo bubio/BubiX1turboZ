@@ -1927,6 +1927,9 @@ proc main() =
   if renderer == nil:
     fail "SDL_CreateRenderer failed: " & $getError()
   sdlWin.showWindow()
+  # Now that there is a window, the native dialogs can open as sheets on it
+  # (macOS); the other backends have no use for this and ignore it.
+  filedialog.setParentWindow(cast[pointer](sdlWin))
   # Whatever SDL made of the request above is the position to remember from
   # here on, so that a run which never moves the window still writes back a
   # position it actually had.
@@ -2296,6 +2299,8 @@ proc main() =
   font.destroy()
   texture.destroy()
   renderer.destroy()
+  # No dialog can outlive the window it would hang from.
+  filedialog.setParentWindow(nil)
   sdlWin.destroy()
   sdl2.quit()
   bx1Destroy(h)
