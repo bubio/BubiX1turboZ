@@ -117,10 +117,28 @@ proc sdlFreeStr(mem: cstring) {.importc: "SDL_free", cdecl.}
 
 # The screen area minus whatever the desktop reserves (the menu bar and the
 # Dock on macOS). Used to decide how many "Window xN" scales the Host >
-# Screen menu can offer. The Nim sdl2 binding wraps SDL_GetDisplayBounds
-# but not this one, so it is declared here; returns 0 on success.
+# Screen menu can offer, and to check that a remembered window position is
+# still on a screen. The Nim sdl2 binding wraps SDL_GetDisplayBounds but
+# not this one, so it is declared here; returns 0 on success.
 proc sdlGetDisplayUsableBounds(displayIndex: cint, bounds: var Rect): cint
   {.importc: "SDL_GetDisplayUsableBounds", cdecl.}
+
+proc windowPosOnScreen(x, y: cint): bool =
+  ## Whether a remembered window origin still lands somewhere the user can
+  ## reach. The display layout can differ from the run that saved it - an
+  ## external screen unplugged, a resolution changed - so the position is
+  ## checked both before it is restored and before it is written back,
+  ## rather than trusting the file. Usable rather than full bounds: the
+  ## menu bar occupies the top of the primary display, and a window
+  ## restored underneath it would be awkward to drag back out.
+  for i in 0 ..< getNumVideoDisplays():
+    var bounds: Rect
+    if sdlGetDisplayUsableBounds(i, bounds) != 0:
+      continue
+    if x >= bounds.x and y >= bounds.y and
+       x < bounds.x + bounds.w and y < bounds.y + bounds.h:
+      return true
+  false
 
 const
   ## How SDL samples the guest texture when it is drawn at a size other than
@@ -456,6 +474,16 @@ proc main() =
   var stretchType = clamp(bx1GetWindowStretchType(h).int, 0, 1)
   var fullscreenStretch = clamp(bx1GetFullscreenStretchType(h).int, 0, 3)
   var isFullscreen = false
+  # Where the window stood when the app last quit. Position only: its size
+  # follows windowScale, which the core's own config.ini already carries.
+  # Presence of the keys is what marks a position as remembered - a
+  # negative coordinate is perfectly legal for a window on a display left
+  # of, or above, the primary one, so no numeric value can serve as
+  # "unset". Both are re-read from the window itself once it exists.
+  let hasSavedWindowPos = hostCfg.getStr("WindowX", "").len > 0 and
+                          hostCfg.getStr("WindowY", "").len > 0
+  var windowX = hostCfg.getInt("WindowX", 0).cint
+  var windowY = hostCfg.getInt("WindowY", 0).cint
   # WINDOW_HEIGHT_ASPECT for this machine: 480.
   let aspectHeight = bx1GetAspectHeight(h).int
 
@@ -1884,8 +1912,14 @@ proc main() =
   # happens in.
   # The application's name alone: this is the only window the user works
   # in, so naming what it shows would only repeat what the app is.
-  sdlWin = createWindow("BubiX1turboZ", SDL_WINDOWPOS_UNDEFINED,
-    SDL_WINDOWPOS_UNDEFINED, (ScreenWidth * windowScale).cint,
+  # Restored where the last run left it, unless there is no remembered
+  # position or it no longer falls on any screen - then SDL places the
+  # window itself.
+  let restorePos = hasSavedWindowPos and windowPosOnScreen(windowX, windowY)
+  sdlWin = createWindow("BubiX1turboZ",
+    (if restorePos: windowX else: SDL_WINDOWPOS_UNDEFINED.cint),
+    (if restorePos: windowY else: SDL_WINDOWPOS_UNDEFINED.cint),
+    (ScreenWidth * windowScale).cint,
     (guestHeight() * windowScale).cint + statusBarHeight(), SDL_WINDOW_HIDDEN)
   if sdlWin == nil:
     fail "SDL_CreateWindow failed: " & $getError()
@@ -1893,6 +1927,10 @@ proc main() =
   if renderer == nil:
     fail "SDL_CreateRenderer failed: " & $getError()
   sdlWin.showWindow()
+  # Whatever SDL made of the request above is the position to remember from
+  # here on, so that a run which never moves the window still writes back a
+  # position it actually had.
+  sdlWin.getPosition(windowX, windowY)
 
   # Logged because the crash above is specific to one backend: if it ever
   # comes back, the first question is which renderer was in use.
@@ -2123,6 +2161,13 @@ proc main() =
         case ev.window.event
         of WindowEvent_Close:
           setRunning(false)
+        of WindowEvent_Moved:
+          # Only while the window is a window: on macOS the transition out
+          # of fullscreen is animated, so moves carrying the fullscreen
+          # origin can still arrive after isFullscreen has gone false.
+          if not isFullscreen:
+            windowX = ev.window.data1
+            windowY = ev.window.data2
         of WindowEvent_FocusLost:
           # Without this, a key held down when focus moves away from the
           # SDL window would otherwise never see its key-up event and
@@ -2232,6 +2277,13 @@ proc main() =
   # this port's additions and have nowhere to go there.
   hostCfg.setInt("VolumeMaster", volumeMaster)
   hostCfg.setBool("VolumeLinkLR", volumeLinked)
+  # Checked once more on the way out: the guard on WindowEvent_Moved cannot
+  # catch a move that lands off-screen for the *next* run, and an
+  # unreachable position is worse than none at all - leaving the keys as
+  # they were means the next launch falls back to SDL's own placement.
+  if windowPosOnScreen(windowX, windowY):
+    hostCfg.setInt("WindowX", windowX.int)
+    hostCfg.setInt("WindowY", windowY.int)
   hostconfig.save(paths.hostConfigPath(), hostCfg)
 
   # Before the device closes: stopSoundRecording has to write the header's
