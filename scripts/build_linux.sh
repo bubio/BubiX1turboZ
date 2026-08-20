@@ -135,7 +135,7 @@ Version: $VERSION
 Section: games
 Priority: optional
 Architecture: $ARCH
-Depends: libc6, libstdc++6, libgtk-3-0, libsdl2-2.0-0, libarchive-tools
+Depends: libc6, libstdc++6, libgtk-3-0, libsdl2-2.0-0, libarchive-tools | p7zip-full
 Maintainer: bubio
 Description: Sharp X1 turbo Z emulator
  A multi-platform emulator of the Sharp X1 turbo Z, using the Common Source

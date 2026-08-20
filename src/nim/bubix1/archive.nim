@@ -6,13 +6,20 @@
 ## `bx1_handle` or drive assignment. The caller (bubix1turboz.nim) decides
 ## which resolved path goes to which drive and when to reset the VM.
 ##
-## Extraction shells out to bsdtar, the libarchive front end, whose backend
-## reads both `.7z` and `.zip` with no extra flags - so one code path covers
-## both formats, and no third-party `7z`/`p7zip` binary is needed. macOS
+## Extraction shells out to whichever archiver the host has. First choice
+## is bsdtar, the libarchive front end, whose backend reads both `.7z` and
+## `.zip` with no extra flags - so one code path covers both formats. macOS
 ## ships bsdtar as `/usr/bin/tar`; other systems provide it as a separate
-## `bsdtar` (on Linux, the `libarchive-tools` package). GNU tar cannot read
-## these formats, so `extractTool` prefers a real `bsdtar` and only falls
-## back to `/usr/bin/tar` where that path *is* bsdtar.
+## `bsdtar` (on Linux, the `libarchive-tools` package). GNU tar can read
+## neither format, and on Linux it is what `/usr/bin/tar` usually is, so
+## that path is used only when it identifies itself as bsdtar.
+##
+## Where there is no bsdtar, a 7-Zip binary (`7zz`/`7z`/`7za`, from p7zip
+## or 7-Zip itself) is used instead, and `unzip` covers `.zip` alone as a
+## last resort - between them these are on far more machines than
+## libarchive-tools is. With none of them installed, extraction raises
+## `ArchiveToolMissingError` so the caller can say what to install rather
+## than report an archive as broken.
 
 import std/[os, osproc, strutils, hashes, times, algorithm]
 import paths
@@ -30,13 +37,70 @@ const
   archiveExts = [".zip", ".7z"]
   playlistExts = [".m3u", ".m3u8"]
 
-proc extractTool(): string =
-  ## The bsdtar binary to extract with. A real `bsdtar` on the PATH wins
-  ## (Linux's libarchive-tools puts it there); otherwise `/usr/bin/tar`,
-  ## which is bsdtar on macOS. GNU tar cannot read .7z/.zip, so a bare `tar`
-  ## from the PATH is deliberately not consulted.
-  let bsd = findExe("bsdtar")
-  if bsd.len > 0: bsd else: "/usr/bin/tar"
+type
+  ArchiveToolMissingError* = object of IOError
+    ## Raised when the host has no archiver this module knows how to
+    ## drive. Its own type because it is the one extraction failure the
+    ## user can fix by installing something, and the only one worth
+    ## naming a package in.
+
+var cachedBsdtar = ""
+  ## Result of the `bsdtar --version` probe below, "-" for "looked and
+  ## found none". Cached because the probe spawns a process and a drop of
+  ## a multi-disk archive resolves through here repeatedly.
+
+proc bsdtarPath(): string =
+  ## The bsdtar binary to extract with, or "" if the host has none. A
+  ## `bsdtar` on the PATH wins (Linux's libarchive-tools puts it there).
+  ## `/usr/bin/tar` is accepted only when it says it is bsdtar, which it
+  ## is on macOS and is not on a typical Linux, where it is GNU tar and
+  ## can read neither `.7z` nor `.zip`.
+  if cachedBsdtar.len == 0:
+    cachedBsdtar = "-"
+    let bsd = findExe("bsdtar")
+    if bsd.len > 0:
+      cachedBsdtar = bsd
+    elif fileExists("/usr/bin/tar"):
+      try:
+        let (output, code) = execCmdEx("/usr/bin/tar --version")
+        if code == 0 and output.toLowerAscii().contains("bsdtar"):
+          cachedBsdtar = "/usr/bin/tar"
+      except CatchableError:
+        discard
+  if cachedBsdtar == "-": "" else: cachedBsdtar
+
+proc sevenZipPath(): string =
+  ## A 7-Zip command line binary, under any of the names the various
+  ## packages install it as: `7zz` is upstream 7-Zip's own, `7z` and
+  ## `7za` come from p7zip.
+  for exe in ["7zz", "7z", "7za"]:
+    let found = findExe(exe)
+    if found.len > 0:
+      return found
+  ""
+
+proc extractCommand(path, dest: string): string =
+  ## The shell command that unpacks `path` into the existing directory
+  ## `dest`. Raises `ArchiveToolMissingError` when nothing on the host
+  ## can read the archive.
+  let bsd = bsdtarPath()
+  if bsd.len > 0:
+    return bsd.quoteShell() & " -xf " & path.quoteShell() &
+      " -C " & dest.quoteShell()
+  let seven = sevenZipPath()
+  if seven.len > 0:
+    # `x` keeps the paths stored in the archive, which is what makes a
+    # compilation's `Disk A/game.d88` layout survive; `-y` answers the
+    # overwrite prompt so a failure cannot become a hang on stdin.
+    return seven.quoteShell() & " x -y " & path.quoteShell() &
+      " -o" & dest.quoteShell()
+  if path.splitFile().ext.toLowerAscii() == ".zip":
+    let unzip = findExe("unzip")
+    if unzip.len > 0:
+      return unzip.quoteShell() & " -qq -o " & path.quoteShell() &
+        " -d " & dest.quoteShell()
+  raise newException(ArchiveToolMissingError,
+    "no archiver found for " & path)
 
 proc classify*(path: string): MediaKind =
   let ext = path.splitFile().ext.toLowerAscii()
@@ -103,8 +167,16 @@ proc extractArchive*(path: string): string =
   let tmp = dest & ".tmp-" & $getCurrentProcessId()
   removeDir(tmp)
   createDir(tmp)
-  let (output, code) = execCmdEx(extractTool().quoteShell() & " -xf " &
-    path.quoteShell() & " -C " & tmp.quoteShell())
+  var command = ""
+  try:
+    command = extractCommand(path, tmp)
+  except ArchiveToolMissingError:
+    # The temp directory must not outlive the attempt, whatever went
+    # wrong - see the comment above for why a stray one is worse than no
+    # extraction at all.
+    removeDir(tmp)
+    raise
+  let (output, code) = execCmdEx(command)
   if code != 0:
     removeDir(tmp)
     raise newException(IOError, "failed to extract " & path & ": " & output)

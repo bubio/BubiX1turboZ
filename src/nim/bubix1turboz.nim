@@ -700,10 +700,22 @@ proc main() =
     # OSError, and OSError is not an IOError - so an unreadable or
     # just-deleted archive would escape an IOError-only handler and take the
     # app down instead of printing the warning this proc exists for.
+    #
+    # The failure is reported in a dialog and not only on stderr: the app
+    # is started from the Finder/desktop far more often than from a
+    # terminal, and a drop that silently loads nothing looks like the
+    # drop itself was not noticed.
     try:
       result = archive.resolveMedia(path)
+    except archive.ArchiveToolMissingError as e:
+      stderr.writeLine "bubix1turboz: " & e.msg
+      filedialog.message(tr(msgArchiveFailedTitle),
+                         trf(msgArchiveNoTool, path.extractFilename()))
+      result = @[]
     except CatchableError as e:
       stderr.writeLine "bubix1turboz: " & e.msg
+      filedialog.message(tr(msgArchiveFailedTitle),
+                         trf(msgArchiveFailed, path.extractFilename()))
       result = @[]
 
   proc floppyImagesOf(path: string): seq[string] =

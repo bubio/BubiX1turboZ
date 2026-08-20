@@ -69,7 +69,7 @@ BubiX1turboZ は、[Common Source Code Project](https://takeda-toshiya.my.coocan
 
 - Ubuntu 22.04 以降（または同等のディストリビューション） / amd64・arm64
 - GTK3（`libgtk-3-0`）と SDL2。AppImage は SDL2 を同梱し GTK3 はシステムのものを使います。`.deb` は両方を依存関係として要求します。
-- `7z` / `zip` の展開には bsdtar（`libarchive-tools`）を使います。`.deb` は依存関係として要求します。AppImage で使う場合はシステムに `libarchive-tools` を入れてください（生のディスクイメージには不要です）。
+- `7z` / `zip` の展開には外部のアーカイバーを使います。bsdtar（`libarchive-tools`）が第一候補で、無ければ 7-Zip（`p7zip-full` の `7z` / `7za`、または `7zz`）、`zip` だけは `unzip` でも展開できます。`.deb` は `libarchive-tools | p7zip-full` を依存関係として要求します。AppImage で使う場合はどちらかをシステムに入れてください（生のディスクイメージには不要です）。いずれも無い状態でアーカイブを開くと、何を入れればよいかを伝えるダイアログが出ます。
 - X11 セッション（メニューバー埋め込みは X11 のウィンドウ再ペアレントを使います）
 
 Windows 11 (x86_64) は移植先として設計に織り込んであり、CI でも `nim check` によるコンパイル検査を行っていますが、**現時点でバイナリを提供しているのは macOS (Apple シリコン) と Linux (amd64・arm64) です**。Intel Mac 向けとユニバーサルバイナリ、Windows 版も今後の対応です。
@@ -236,6 +236,6 @@ sudo apt install libsdl2-dev libgtk-3-dev zlib1g-dev
 | [SDL2](https://github.com/libsdl-org/SDL) | zlib License | ウィンドウ、入力、オーディオ、レンダリング |
 | [GTK3](https://www.gtk.org/) | LGPL-2.1-or-later | Linux のメニューバー・ダイアログ・設定パネル |
 | zlib | zlib License | ステートセーブの圧縮と PNG 出力（OS 同梱の libz を使用） |
-| bsdtar (libarchive) | 3-clause BSD License | `7z` / `zip` の展開（macOS は `/usr/bin/tar`、Linux は `libarchive-tools` の `bsdtar`） |
+| bsdtar (libarchive) / 7-Zip / unzip | 3-clause BSD License ほか | `7z` / `zip` の展開（macOS は `/usr/bin/tar`、Linux は `libarchive-tools` の `bsdtar`、無ければ `7z` 系または `unzip`） |
 
-macOS では `SDL2.framework` をビルド時に公式配布物として取得し `.app` に同梱します。Linux では AppImage が SDL2 を同梱し、GTK3 はシステムのものを使います。zlib と bsdtar は OS が提供するものをそのまま利用しており、再配布は行っていません。
+macOS では `SDL2.framework` をビルド時に公式配布物として取得し `.app` に同梱します。Linux では AppImage が SDL2 を同梱し、GTK3 はシステムのものを使います。zlib と展開用のアーカイバーは OS が提供するものをそのまま利用しており、再配布は行っていません。
