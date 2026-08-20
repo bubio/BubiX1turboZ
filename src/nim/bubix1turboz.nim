@@ -72,6 +72,7 @@ import bubix1/ui/clipboard
 import bubix1/ui/filedialog
 import bubix1/ui/statepicker
 import bubix1/ui/volumepanel
+import bubix1/ui/hostwindow
 
 const
   ScreenWidth = 640
@@ -508,8 +509,8 @@ proc main() =
     ## drawFrame works in real window points and computes that itself.
     if sdlWin == nil:
       return
-    sdlWin.setSize((ScreenWidth * windowScale).cint,
-                   (guestHeight() * windowScale).cint + statusBarHeight())
+    hostwindow.setSize(sdlWin, (ScreenWidth * windowScale).cint,
+                       (guestHeight() * windowScale).cint + statusBarHeight())
 
   proc maxWindowScale(): int =
     ## How many "Window xN" items Host > Screen offers. The original builds
@@ -1736,7 +1737,7 @@ proc main() =
 
   proc applyFullscreen(on: bool) =
     if sdlWin != nil:
-      discard sdlWin.setFullscreen(if on: SDL_WINDOW_FULLSCREEN_DESKTOP else: 0)
+      hostwindow.setFullscreen(sdlWin, on)
     isFullscreen = on
     if not on:
       # Leaving fullscreen restores whatever window scale is selected: SDL
@@ -1926,14 +1927,17 @@ proc main() =
   renderer = createRenderer(sdlWin, -1, Renderer_Accelerated)
   if renderer == nil:
     fail "SDL_CreateRenderer failed: " & $getError()
-  sdlWin.showWindow()
+  # Show the window. On macOS this is SDL_ShowWindow; on Linux it embeds the
+  # surface under the GTK menu bar, restoring the remembered position on the
+  # top-level that carries it (see bubix1/ui/hostwindow.nim).
+  hostwindow.present(sdlWin, windowX, windowY, restorePos)
   # Now that there is a window, the native dialogs can open as sheets on it
   # (macOS); the other backends have no use for this and ignore it.
   filedialog.setParentWindow(cast[pointer](sdlWin))
-  # Whatever SDL made of the request above is the position to remember from
-  # here on, so that a run which never moves the window still writes back a
-  # position it actually had.
-  sdlWin.getPosition(windowX, windowY)
+  # Whatever the window system made of the request above is the position to
+  # remember from here on, so that a run which never moves the window still
+  # writes back a position it actually had.
+  hostwindow.getPosition(sdlWin, windowX, windowY)
 
   # Logged because the crash above is specific to one backend: if it ever
   # comes back, the first question is which renderer was in use.
@@ -2132,6 +2136,9 @@ proc main() =
 
   var ev = sdl2.defaultEvent
   while running():
+    # Beside SDL's own queue, drain the host toolkit's: on Linux the menu bar
+    # and any non-modal panel live in GTK's event loop (a no-op elsewhere).
+    hostwindow.pumpEvents()
     while pollEvent(ev):
       case ev.kind
       of QuitEvent:
@@ -2283,7 +2290,10 @@ proc main() =
   # Checked once more on the way out: the guard on WindowEvent_Moved cannot
   # catch a move that lands off-screen for the *next* run, and an
   # unreachable position is worse than none at all - leaving the keys as
-  # they were means the next launch falls back to SDL's own placement.
+  # they were means the next launch falls back to SDL's own placement. Read
+  # the position afresh here too: on Linux moves arrive at the GTK top-level,
+  # not as SDL WindowEvent_Moved, so windowX/windowY are otherwise stale.
+  hostwindow.getPosition(sdlWin, windowX, windowY)
   if windowPosOnScreen(windowX, windowY):
     hostCfg.setInt("WindowX", windowX.int)
     hostCfg.setInt("WindowY", windowY.int)
@@ -2301,7 +2311,7 @@ proc main() =
   renderer.destroy()
   # No dialog can outlive the window it would hang from.
   filedialog.setParentWindow(nil)
-  sdlWin.destroy()
+  hostwindow.destroy(sdlWin)
   sdl2.quit()
   bx1Destroy(h)
 

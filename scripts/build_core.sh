@@ -1,11 +1,16 @@
 #!/bin/bash
-# Builds the vendored C++ core (arm64 / Apple clang) into a static library.
+# Builds the vendored C++ core into a static library, for whichever host
+# this runs on (macOS: arm64 / Apple clang; Linux: native g++).
 #
 # Compiles the translation units listed in the original
 # vc++2017/x1turboz.vcxproj (minus src/win32/*), the new src/core/sdl/*.cpp
 # OSD implementation, and the src/bridge/*.cpp C ABI facade, into
-# build/libbubix1core.a. This is the one library scripts/build_app_macos_dev.sh
-# links the Nim application against.
+# build/libbubix1core.a. This is the one library the dev build scripts
+# (build_app_macos_dev.sh / build_app_linux_dev.sh) link the app against.
+#
+# The core is host independent: src/core/sdl/osd.h deliberately includes no
+# SDL headers (the C++/Nim boundary is a pure data boundary), so no SDL
+# include path is needed here on any platform.
 #
 # Usage: ./scripts/build_core.sh [group]
 #   group = vm | app | osd | bridge | all (default: all)
@@ -18,20 +23,33 @@ OBJ=build/core-obj
 LOG=build/core-compile.log
 LIB=build/libbubix1core.a
 
-# Matches LSMinimumSystemVersion in the .app's Info.plist. Without it clang
-# stamps the objects with the SDK's own (current) minimum, which would make
-# the released app refuse to launch on every macOS older than the machine
-# that built it.
-export MACOSX_DEPLOYMENT_TARGET=13.5
+if [ "$(uname -s)" = "Darwin" ]; then
+  # Matches LSMinimumSystemVersion in the .app's Info.plist. Without it clang
+  # stamps the objects with the SDK's own (current) minimum, which would make
+  # the released app refuse to launch on every macOS older than the machine
+  # that built it.
+  export MACOSX_DEPLOYMENT_TARGET=13.5
+  CXX=clang++
+  ARCHFLAGS=(-arch arm64)
+  # Clang's spelling of "string literal assigned to char*", and a warning
+  # only Clang knows for the Shift-JIS bytes in some comments.
+  PLATFORM_WARNINGS=(-Wno-writable-strings -Wno-invalid-source-encoding)
+else
+  # Linux (and any other Unix): the native g++, no architecture flag, and
+  # GCC's own spelling of the writable-string warning. GCC accepts the
+  # Shift-JIS comment bytes without a flag, so -Wno-invalid-source-encoding
+  # (a Clang-only option) is omitted rather than passed and ignored.
+  CXX="${CXX:-g++}"
+  ARCHFLAGS=()
+  PLATFORM_WARNINGS=(-Wno-write-strings)
+fi
 
-CXX=clang++
 CXXFLAGS=(
-  -std=c++17 -arch arm64 -c
+  -std=c++17 "${ARCHFLAGS[@]}" -c
   -D_X1TURBOZ -D_USE_SDL
   -I"$SRC"
   -Wno-register            # 'register' storage class removed in C++17 (fmgen)
-  -Wno-writable-strings
-  -Wno-invalid-source-encoding  # Shift-JIS bytes in comments
+  "${PLATFORM_WARNINGS[@]}"
   -fno-strict-aliasing
 )
 
@@ -120,7 +138,7 @@ if [ "${1:-all}" = "all" ]; then
   LINK_TEST_SRC=$(mktemp /tmp/bubix1_link_test.XXXXXX.cpp)
   LINK_TEST_BIN=$(mktemp /tmp/bubix1_link_test.XXXXXX)
   echo 'int main() { return 0; }' > "$LINK_TEST_SRC"
-  if clang++ -std=c++17 -arch arm64 "$LINK_TEST_SRC" "$LIB" -o "$LINK_TEST_BIN" 2>"$LOG.link"; then
+  if "$CXX" -std=c++17 "${ARCHFLAGS[@]}" "$LINK_TEST_SRC" "$LIB" -o "$LINK_TEST_BIN" 2>"$LOG.link"; then
     echo "link test passed: no undefined symbols"
     rm -f "$LINK_TEST_SRC" "$LINK_TEST_BIN" "$LOG.link"
   else

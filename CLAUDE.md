@@ -4,13 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## リポジトリの現状
 
-**フェーズ 7（アーカイブ・ドラッグ＆ドロップ対応）とフェーズ 9（`.app` バンドル・dmg・CI）まで完了。残るのはフェーズ 8（実ゲームによる検証）とフェーズ 10（ドキュメントと 0.1.0 リリース）。** `src/`・`.nimble` とも存在し、ビルドは以下のスクリプトで行う:
+**フェーズ 7（アーカイブ・ドラッグ＆ドロップ対応）とフェーズ 9（`.app` バンドル・dmg・CI）まで完了。macOS に加えて Linux（GTK メニューバー埋め込み・AppImage/.deb・CI）も対応済み。残るのはフェーズ 8（実ゲームによる検証）とフェーズ 10（ドキュメントと 0.1.0 リリース）。** `src/`・`.nimble` とも存在し、ビルドは以下のスクリプトで行う:
 
-- `scripts/build_core.sh [vm|app|osd|bridge|all]` — 静的ライブラリ `build/libbubix1core.a`（vendored C++ コア + OSD + bridge）をビルド
-- `scripts/fetch_sdl2_framework.sh` — 公式配布の `SDL2.framework` を `build/frameworks` に取得（Homebrew の SDL は使わない。理由は `DevelopmentPlan.md` フェーズ 9）
-- `scripts/build_nim_app.sh <出力先> <rpath>` — Nim アプリ本体のコンパイル。下の 2 つが共有する
-- `scripts/build_app_macos_dev.sh` — 開発用。`build/BubiX1turboZ` を作る（バンドル無し）
-- `scripts/build_macos.sh [--dmg] [--skip-core]` — リリース用。`build/BubiX1turboZ.app` と dmg を作る。CI が実行するのもこれ
+- `scripts/build_core.sh [vm|app|osd|bridge|all]` — 静的ライブラリ `build/libbubix1core.a`（vendored C++ コア + OSD + bridge）をビルド。macOS は clang++/arm64、Linux は g++（OS を自動判別）
+- `scripts/fetch_sdl2_framework.sh` — 公式配布の `SDL2.framework` を `build/frameworks` に取得（Homebrew の SDL は使わない。理由は `DevelopmentPlan.md` フェーズ 9。macOS 専用）
+- `scripts/build_nim_app.sh <出力先> <rpath>` — Nim アプリ本体のコンパイル。macOS は framework、Linux は system SDL2（OS を自動判別）。各プラットフォームの下記スクリプトが共有する
+- `scripts/build_app_macos_dev.sh` — macOS 開発用。`build/BubiX1turboZ` を作る（バンドル無し）
+- `scripts/build_app_linux_dev.sh` — Linux 開発用。`build/BubiX1turboZ` を作る（パッケージ無し）
+- `scripts/build_macos.sh [--dmg] [--skip-core]` — macOS リリース用。`build/BubiX1turboZ.app` と dmg を作る。CI が実行するのもこれ
+- `scripts/build_linux.sh [--appimage] [--deb] [--skip-core]` — Linux リリース用。AppImage と `.deb` を作る。CI が実行するのもこれ（`appimagetool` は自動取得）
 - `scripts/check_other_platforms.sh` — Linux / Windows 向けに `nim check` を走らせ、`src/nim/bubix1/ui/` の外にプラットフォーム依存コードが漏れていないか検査する。macOS のビルドでは検証されない分岐が腐るのを防ぐためのもの
 - `scripts/make_icon.sh` — `assets/AppIcon.icon`（Icon Composer 文書。原画はその `Assets/` 内）と `assets/Assets.xcassets` から `assets/Assets.car` と `assets/AppIcon.icns` を再生成。この 2 つはコミット済みなのでビルドにも CI にも Xcode は要らない。アイコンかアクセントカラーを変えるときだけ実行（ビルドからは呼ばれない。要 Xcode）
 - `scripts/apply_core_patches.sh [--check]` — `patches/` にある、vendored コア（`src/core/`）への修正パッチを適用する。**コアを上流から再取り込みしたら必ず実行すること**（再 vendor でパッチは黙って消える）。冪等。詳細は `patches/README.md`

@@ -8,6 +8,8 @@ import ../i18n
 
 when defined(macosx):
   from ./macos/filedialog as backend import nil
+elif defined(linux):
+  from ./linux/filedialog as backend import nil
 else:
   from ./stub/filedialog as backend import nil
 

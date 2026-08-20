@@ -34,6 +34,8 @@ import std/tables
 
 when defined(macosx):
   from ./macos/nativemenu as backend import nil
+elif defined(linux):
+  from ./linux/nativemenu as backend import nil
 else:
   from ./stub/nativemenu as backend import nil
 

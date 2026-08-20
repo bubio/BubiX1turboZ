@@ -11,6 +11,8 @@ export types.SlotCell
 
 when defined(macosx):
   from ./macos/statepicker as backend import nil
+elif defined(linux):
+  from ./linux/statepicker as backend import nil
 else:
   from ./stub/statepicker as backend import nil
 

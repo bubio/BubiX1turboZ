@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=BubiX1turboZ
+GenericName=X1 turbo Z Emulator
+Comment=Sharp X1 turbo Z emulator
+Comment[ja]=シャープ X1 turbo Z エミュレーター
+Exec=BubiX1turboZ
+Icon=bubix1turboz
+Terminal=false
+Categories=Game;Emulator;
+Keywords=Sharp;X1;turboZ;emulator;retro;
+StartupWMClass=BubiX1turboZ

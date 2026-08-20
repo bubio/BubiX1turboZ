@@ -6,12 +6,13 @@
 ## `bx1_handle` or drive assignment. The caller (bubix1turboz.nim) decides
 ## which resolved path goes to which drive and when to reset the VM.
 ##
-## Extraction shells out to `/usr/bin/tar`, the bsdtar front end to
-## libarchive that ships with the OS itself, not the Homebrew `p7zip`
-## `7z` binary from docs/dev/DevelopmentPlan.md phase 1.1 - a shipped
-## .dmg must work on a Mac with no Homebrew installed. Confirmed at
-## authoring time: bsdtar's libarchive backend reads both `.7z` and
-## `.zip` with no extra flags, so one code path covers both formats.
+## Extraction shells out to bsdtar, the libarchive front end, whose backend
+## reads both `.7z` and `.zip` with no extra flags - so one code path covers
+## both formats, and no third-party `7z`/`p7zip` binary is needed. macOS
+## ships bsdtar as `/usr/bin/tar`; other systems provide it as a separate
+## `bsdtar` (on Linux, the `libarchive-tools` package). GNU tar cannot read
+## these formats, so `extractTool` prefers a real `bsdtar` and only falls
+## back to `/usr/bin/tar` where that path *is* bsdtar.
 
 import std/[os, osproc, strutils, hashes, times, algorithm]
 import paths
@@ -28,6 +29,14 @@ const
   tapeExts = [".tap", ".cmt", ".t88", ".wav"]
   archiveExts = [".zip", ".7z"]
   playlistExts = [".m3u", ".m3u8"]
+
+proc extractTool(): string =
+  ## The bsdtar binary to extract with. A real `bsdtar` on the PATH wins
+  ## (Linux's libarchive-tools puts it there); otherwise `/usr/bin/tar`,
+  ## which is bsdtar on macOS. GNU tar cannot read .7z/.zip, so a bare `tar`
+  ## from the PATH is deliberately not consulted.
+  let bsd = findExe("bsdtar")
+  if bsd.len > 0: bsd else: "/usr/bin/tar"
 
 proc classify*(path: string): MediaKind =
   let ext = path.splitFile().ext.toLowerAscii()
@@ -94,7 +103,8 @@ proc extractArchive*(path: string): string =
   let tmp = dest & ".tmp-" & $getCurrentProcessId()
   removeDir(tmp)
   createDir(tmp)
-  let (output, code) = execCmdEx("/usr/bin/tar -xf " & path.quoteShell() & " -C " & tmp.quoteShell())
+  let (output, code) = execCmdEx(extractTool().quoteShell() & " -xf " &
+    path.quoteShell() & " -C " & tmp.quoteShell())
   if code != 0:
     removeDir(tmp)
     raise newException(IOError, "failed to extract " & path & ": " & output)

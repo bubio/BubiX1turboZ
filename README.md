@@ -13,6 +13,9 @@ BubiX1turboZ は、[Common Source Code Project](https://takeda-toshiya.my.coocan
   <a href="https://github.com/bubio/BubiX1turboZ/actions/workflows/build-macos.yml">
     <img src="https://github.com/bubio/BubiX1turboZ/actions/workflows/build-macos.yml/badge.svg" alt="macOS">
   </a>
+  <a href="https://github.com/bubio/BubiX1turboZ/actions/workflows/build-linux.yml">
+    <img src="https://github.com/bubio/BubiX1turboZ/actions/workflows/build-linux.yml/badge.svg" alt="Linux">
+  </a>
   <a href="https://github.com/bubio/BubiX1turboZ/actions/workflows/check-portability.yml">
     <img src="https://github.com/bubio/BubiX1turboZ/actions/workflows/check-portability.yml/badge.svg" alt="Portability">
   </a>
@@ -25,7 +28,7 @@ BubiX1turboZ は、[Common Source Code Project](https://takeda-toshiya.my.coocan
 - **C++ コア + Nim アプリケーション層の二層構成**
   eX1turboZ のコアはそのまま使い、OS 依存の処理はすべて上位層で吸収しています。
 - **GUI はプラットフォームのネイティブ API**
-  メニューバー・ダイアログ・設定パネルは macOS では AppKit を直接使います。クロスプラットフォームの GUI ツールキットは使いません。
+  メニューバー・ダイアログ・設定パネルは、macOS では AppKit、Linux では GTK3 を直接使います。クロスプラットフォームの GUI ツールキットは使いません。Linux ではグローバルメニューバーが無いため、メニューバーをウィンドウ上部に組み込み、SDL の描画面をその下に埋め込みます。
 - **メディア操作が速い**
   `D88` などのディスクイメージを、メニュー・ドラッグ&ドロップのどちらからでも読み込めます。ドロップした場合は自動でリセットして起動します。
 - **アーカイブをそのまま開ける**
@@ -62,17 +65,42 @@ BubiX1turboZ は、[Common Source Code Project](https://takeda-toshiya.my.coocan
 - macOS 13.5 (Ventura) 以降
 - Apple シリコン (arm64)
 
-Linux (Ubuntu 22.04 以降 / amd64・arm64) と Windows 11 (x86_64) は移植先として設計に織り込んであり、CI でも `nim check` によるコンパイル検査を行っていますが、**現時点でバイナリを提供しているのは macOS の Apple シリコン版のみ**です。Intel Mac 向けとユニバーサルバイナリも今後の対応です。
+### Linux
+
+- Ubuntu 22.04 以降（または同等のディストリビューション） / amd64・arm64
+- GTK3（`libgtk-3-0`）と SDL2。AppImage は SDL2 を同梱し GTK3 はシステムのものを使います。`.deb` は両方を依存関係として要求します。
+- `7z` / `zip` の展開には bsdtar（`libarchive-tools`）を使います。`.deb` は依存関係として要求します。AppImage で使う場合はシステムに `libarchive-tools` を入れてください（生のディスクイメージには不要です）。
+- X11 セッション（メニューバー埋め込みは X11 のウィンドウ再ペアレントを使います）
+
+Windows 11 (x86_64) は移植先として設計に織り込んであり、CI でも `nim check` によるコンパイル検査を行っていますが、**現時点でバイナリを提供しているのは macOS (Apple シリコン) と Linux (amd64・arm64) です**。Intel Mac 向けとユニバーサルバイナリ、Windows 版も今後の対応です。
 
 ## Install
 
+### macOS
+
 [Releases](https://github.com/bubio/BubiX1turboZ/releases) ページから dmg をダウンロードし、`BubiX1turboZ.app` を `Applications` にドラッグしてください。
+
+### Linux
+
+[Releases](https://github.com/bubio/BubiX1turboZ/releases) から AppImage または `.deb` をダウンロードします。
+
+- **AppImage**: 実行権限を付けてそのまま起動できます。追加のインストールは不要です。
+  ```sh
+  chmod +x bubix1turboz-*-linux-*.AppImage
+  ./bubix1turboz-*-linux-*.AppImage
+  ```
+- **.deb**（Ubuntu / Debian 系）:
+  ```sh
+  sudo apt install ./bubix1turboz-*-linux-*.deb
+  ```
 
 ### CI 生成物一覧
 
 | OS | CI Artifact 名 | Release Asset 名 |
 |---|---|---|
 | macOS (arm64) | `bubix1turboz-macos-arm64.zip` | `bubix1turboz-{version}-macos-arm64.dmg` |
+| Linux (amd64) | `bubix1turboz-linux-amd64-appimage` / `-deb` | `bubix1turboz-{version}-linux-amd64.AppImage` / `.deb` |
+| Linux (arm64) | `bubix1turboz-linux-arm64-appimage` / `-deb` | `bubix1turboz-{version}-linux-arm64.AppImage` / `.deb` |
 
 > **macOS での注意**: このアプリは Apple Developer ID による署名・公証（notarization）を受けていないため、初回起動時に Gatekeeper によってブロックされます。以下のいずれかの方法で回避できます：
 >
@@ -118,32 +146,33 @@ ROM が入っていない状態で起動すると、置き場所を知らせる�
 - `Host -> Screen` でウィンドウ倍率・アスペクト比・フルスクリーンの表示方法を切り替えられます。
 - `Host -> Volume` で各音源のバランスを調整できます。
 
-よく使うショートカット:
+よく使うショートカット（macOS の `Cmd` は Linux では `Ctrl`）:
 
-- `Cmd+R`: リセット
-- `Cmd+V`: テキストの貼り付け（オートキー）
-- `Cmd+S` / `Cmd+L`: クイックセーブ / クイックロード
-- `Cmd+3`: FD0 & FD1 にまとめて挿入
+- `Cmd+R` / `Ctrl+R`: リセット
+- `Cmd+V` / `Ctrl+V`: テキストの貼り付け（オートキー）
+- `Cmd+S` / `Ctrl+S` ・ `Cmd+L` / `Ctrl+L`: クイックセーブ / クイックロード
+- `Cmd+3` / `Ctrl+3`: FD0 & FD1 にまとめて挿入
 - `Cmd+Ctrl+F`: フルスクリーン切り替え
+
+> **Linux でのメニュー操作について**: ゲーム画面にキーボードフォーカスがある間は、押したキーはゲスト（エミュレーター）へ送られるため、メニューのキーボードショートカットは発火しないことがあります。メニューはクリックで操作するのが確実です（ショートカット表示は目安です）。
 
 ## ソースからビルドする
 
-### 必要なもの
-
-- macOS 13.5 以降
-- Xcode Command Line Tools
-- [mise](https://mise.jdx.dev/)（Nim ツールチェーンのバージョン固定に使用）
-
-SDL2 は公式配布の `SDL2.framework` をビルド時に自動取得するため、Homebrew の SDL は不要です。Xcode 本体があればアプリ独自のアクセントカラーも埋め込まれます（`actool` を使うため。無い場合はシステムのアクセントカラーになります）。
-
-### macOS
+いずれのプラットフォームでも [mise](https://mise.jdx.dev/) で Nim ツールチェーン（バージョンは `mise.toml` で固定）を用意します。
 
 ```sh
-# Nim ツールチェーン（バージョンは mise.toml で固定）
 mise plugins install nim https://github.com/asdf-community/asdf-nim
 mise install
 mise exec -- nimble install -d -y
+```
 
+### macOS
+
+- macOS 13.5 以降 / Xcode Command Line Tools
+
+SDL2 は公式配布の `SDL2.framework` をビルド時に自動取得するため、Homebrew の SDL は不要です。Xcode 本体があればアプリ独自のアクセントカラーも埋め込まれます（`actool` を使うため。無い場合はシステムのアクセントカラーになります）。
+
+```sh
 # .app バンドルと dmg
 ./scripts/build_macos.sh --dmg
 ```
@@ -157,10 +186,32 @@ mise exec -- nimble install -d -y
 ./scripts/build_app_macos_dev.sh
 ```
 
+### Linux
+
+- Ubuntu 22.04 以降 / g++ / SDL2・GTK3・zlib の開発パッケージ
+
+```sh
+sudo apt install libsdl2-dev libgtk-3-dev zlib1g-dev
+
+# AppImage と .deb（パッケージング用に imagemagick も使います）
+./scripts/build_linux.sh --appimage --deb
+```
+
+`build/bubix1turboz-<version>-linux-<arch>.AppImage` と同 `.deb` が生成されます（AppImage の生成には `appimagetool` を自動取得します）。
+
+アプリ本体だけを繰り返しビルドする場合:
+
+```sh
+./scripts/build_core.sh all
+./scripts/build_app_linux_dev.sh
+./build/BubiX1turboZ
+```
+
 ## 現在の注意点
 
 - ROM イメージは同梱していません。
-- 提供しているビルドは macOS (Apple シリコン) 版のみです。Linux / Windows 版は未提供です。
+- 提供しているビルドは macOS (Apple シリコン) 版と Linux (amd64・arm64) 版です。Windows 版は未提供です。
+- Linux では X11 セッションを前提としています（Wayland では XWayland 経由で動作します）。
 - CMT（テープ）には対応していません。UI からの到達経路を塞いでいます。
 - 市販ゲームの実行に不要な機能は意図的に実装していません（FDD は 2 基、HDD 非対応など）。
 - 実ゲームによる動作検証と、ユーザー向け操作マニュアル（`docs/UserManual.md`）は作業中です。
@@ -169,7 +220,7 @@ mise exec -- nimble install -d -y
 ## クレジット
 
 - Original eX1turboZ by Takeda, Toshiya ([Common Source Code Project](https://takeda-toshiya.my.coocan.jp/common/index.html))
-- macOS / Nim + SDL2 port maintained by bubio
+- macOS / Linux Nim + SDL2 port maintained by bubio
 
 ## ライセンス
 
@@ -183,7 +234,8 @@ mise exec -- nimble install -d -y
 |---|---|---|
 | [eX1turboZ (Common Source Code Project)](https://takeda-toshiya.my.coocan.jp/common/index.html) | GPL-2.0-or-later | エミュレーションコア |
 | [SDL2](https://github.com/libsdl-org/SDL) | zlib License | ウィンドウ、入力、オーディオ、レンダリング |
+| [GTK3](https://www.gtk.org/) | LGPL-2.1-or-later | Linux のメニューバー・ダイアログ・設定パネル |
 | zlib | zlib License | ステートセーブの圧縮と PNG 出力（OS 同梱の libz を使用） |
-| bsdtar (libarchive) | 3-clause BSD License | `7z` / `zip` の展開（OS 同梱の `/usr/bin/tar` を使用） |
+| bsdtar (libarchive) | 3-clause BSD License | `7z` / `zip` の展開（macOS は `/usr/bin/tar`、Linux は `libarchive-tools` の `bsdtar`） |
 
-`SDL2.framework` はビルド時に公式配布物を取得し、`.app` バンドルへ同梱します。zlib と bsdtar は OS が提供するものをそのまま利用しており、再配布は行っていません。
+macOS では `SDL2.framework` をビルド時に公式配布物として取得し `.app` に同梱します。Linux では AppImage が SDL2 を同梱し、GTK3 はシステムのものを使います。zlib と bsdtar は OS が提供するものをそのまま利用しており、再配布は行っていません。
