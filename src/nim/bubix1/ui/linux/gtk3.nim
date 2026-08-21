@@ -127,6 +127,8 @@ proc gtk_dialog_new_with_buttons*(title: cstring, parent: GtkWidget,
   flags: cint, firstButtonText: cstring): GtkWidget
 proc gtk_file_chooser_get_filename*(chooser: GtkWidget): cstring
 proc gtk_file_chooser_set_current_name*(chooser: GtkWidget, name: cstring)
+proc gtk_file_chooser_set_current_folder*(chooser: GtkWidget,
+  folder: cstring): Gboolean {.discardable.}
 proc gtk_file_chooser_set_do_overwrite_confirmation*(chooser: GtkWidget,
   doConfirm: Gboolean)
 proc gtk_file_chooser_add_filter*(chooser, filter: GtkWidget)

@@ -390,6 +390,19 @@ proc main() =
   if h == nil:
     fail "bx1_create failed (place BIOS ROMs in " & paths.romsDir() & ")"
   var recent = recentfiles.load(paths.recentFilesPath())
+  # Where the panels open. A title is opened from wherever the last one
+  # came from, so the recent list already answers that and no key of its
+  # own is needed; writing a disk out is a different question with a
+  # different answer, and those two do get remembered here.
+  var lastSaveDir = hostCfg.getStr("LastSaveDir", "")
+  var lastExportDir = hostCfg.getStr("LastExportDir", "")
+
+  proc lastDiskDir(): string =
+    ## The folder the most recently opened title came from, or "" while
+    ## there is no history - the panel then opens wherever the platform
+    ## would have put it (see ui/filedialog.nim).
+    if recent.len > 0: recent[0].parentDir() else: ""
+
   setRunning(true)
 
   proc vmSoundType(): int =
@@ -1302,14 +1315,14 @@ proc main() =
     # .d88 - loadMedia works out which it is - rather than through a
     # separate "open archive" item the user would have to choose between.
     result = proc () =
-      let path = filedialog.openFile(filedialog.DiskExtensions)
+      let path = filedialog.openFile(filedialog.DiskExtensions, lastDiskDir())
       if path.len > 0:
         loadMedia(path, startDrive = drv)
   proc insertBothAction(): MenuAction =
     ## Bubilator88's "Drive 1&2" mount, which is how a 2-disk game is
     ## normally started: no chooser, first disk in FD0, second in FD1.
     result = proc () =
-      let path = filedialog.openFile(filedialog.DiskExtensions)
+      let path = filedialog.openFile(filedialog.DiskExtensions, lastDiskDir())
       if path.len > 0:
         loadMedia(path, bothDrives = true)
   proc makeEjectAction(drv: int): MenuAction =
@@ -1320,8 +1333,10 @@ proc main() =
     ## of the request rather than something to infer. (Bubilator88 has one
     ## Create Blank Disk at the top and picks the first free drive itself.)
     result = proc () =
-      let path = filedialog.saveFile(filedialog.BlankDiskExtensions, "blank.d88")
+      let path = filedialog.saveFile(filedialog.BlankDiskExtensions, "blank.d88",
+                                     lastSaveDir)
       if path.len > 0 and bx1CreateBlankFloppyDisk(h, path.cstring, mediaType.cint) != 0:
+        lastSaveDir = path.parentDir()
         driveSet[drv] = diskset.build([path])
         driveSource[drv] = path
         discard mountAt(drv, 0)
@@ -1405,9 +1420,10 @@ proc main() =
   # the way out of it. Bubilator88 answers the same problem the same way
   # (Export Cached Disks…); see archive.exportCache.
   diskMenu.addItem(tr(msgExportExtractedDots), proc () =
-    let dest = filedialog.chooseFolder(tr(msgExportChooseFolder))
+    let dest = filedialog.chooseFolder(tr(msgExportChooseFolder), lastExportDir)
     if dest.len == 0:
       return
+    lastExportDir = dest
     try:
       let done = archive.exportCache(dest)
       if done.archives == 0:
@@ -2297,6 +2313,12 @@ proc main() =
   hostCfg.setStr("UILanguage", uiLanguage)
   # The per-device levels live in the core's own config.ini; these two are
   # this port's additions and have nowhere to go there.
+  # Only once there is something to remember: an empty value would just be
+  # a key the next launch has to fall back from anyway.
+  if lastSaveDir.len > 0:
+    hostCfg.setStr("LastSaveDir", lastSaveDir)
+  if lastExportDir.len > 0:
+    hostCfg.setStr("LastExportDir", lastExportDir)
   hostCfg.setInt("VolumeMaster", volumeMaster)
   hostCfg.setBool("VolumeLinkLR", volumeLinked)
   # Checked once more on the way out: the guard on WindowEvent_Moved cannot

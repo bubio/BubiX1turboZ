@@ -4,6 +4,7 @@
 ## backend draws no text of its own and each new one inherits the
 ## translations rather than repeating them (see i18n.nim).
 
+import std/os
 import ../i18n
 
 when defined(macosx):
@@ -32,18 +33,30 @@ proc setParentWindow*(window: pointer) =
   ## fall back to standing on their own.
   backend.setParentWindow(window)
 
-proc openFile*(extensions = ""): string =
+proc usableDir(dir: string): string =
+  ## The single place a caller-supplied start directory is vetted, so no
+  ## backend has to. A folder that has since been renamed or unplugged
+  ## reads as none at all, which leaves the panel wherever the platform
+  ## would have opened it by itself.
+  if dir.len > 0 and dirExists(dir): dir else: ""
+
+proc openFile*(extensions = "", startDir = ""): string =
   ## Empty string means the user cancelled.
-  backend.openFile(extensions)
+  ##
+  ## `startDir` is where the panel should open. Leave it empty to accept
+  ## the platform's own answer - on macOS that is the folder the last
+  ## panel used, which is remembered per application and is exactly what
+  ## a caller with nothing better to offer wants.
+  backend.openFile(extensions, usableDir(startDir))
 
-proc saveFile*(extensions = "", suggestedName = ""): string =
-  backend.saveFile(extensions, suggestedName)
+proc saveFile*(extensions = "", suggestedName = "", startDir = ""): string =
+  backend.saveFile(extensions, suggestedName, usableDir(startDir))
 
-proc chooseFolder*(title: string): string =
+proc chooseFolder*(title: string, startDir = ""): string =
   ## Asks for a destination folder. Empty string means the user
   ## cancelled. The default button says what will happen to the folder,
   ## since a folder chooser has no file name field to explain itself.
-  backend.chooseFolder(title, tr(msgButtonExport))
+  backend.chooseFolder(title, tr(msgButtonExport), usableDir(startDir))
 
 proc message*(title, body: string) =
   backend.message(title, body, tr(msgButtonOk))

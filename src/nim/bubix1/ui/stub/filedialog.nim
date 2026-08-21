@@ -8,13 +8,13 @@ proc setParentWindow*(window: pointer) =
   ## Nothing here has a window to hang a dialog from.
   discard
 
-proc openFile*(extensions: string): string =
+proc openFile*(extensions, startDir: string): string =
   ## "" is what a cancelled panel returns.
   ""
 
-proc saveFile*(extensions, suggestedName: string): string = ""
+proc saveFile*(extensions, suggestedName, startDir: string): string = ""
 
-proc chooseFolder*(title, prompt: string): string = ""
+proc chooseFolder*(title, prompt, startDir: string): string = ""
 
 proc message*(title, body, okLabel: string) =
   stderr.writeLine(title & ": " & body)

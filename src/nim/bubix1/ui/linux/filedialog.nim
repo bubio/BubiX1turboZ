@@ -34,6 +34,13 @@ proc addFilters(chooser: GtkWidget, extensions: string) =
   gtk_file_filter_set_name(filter, names.join(" ").cstring)
   gtk_file_chooser_add_filter(chooser, filter)
 
+proc setStartDir(chooser: GtkWidget, startDir: string) =
+  ## Opens the chooser on `startDir`, or leaves GTK's own choice alone when
+  ## the caller has none. Unlike AppKit, GTK remembers nothing between
+  ## panels, so without this every chooser starts in the working directory.
+  if startDir.len > 0:
+    gtk_file_chooser_set_current_folder(chooser, startDir.cstring)
+
 proc runFilename(dialog: GtkWidget): string =
   ## Run a file chooser to completion and return the chosen path, or "".
   result = ""
@@ -49,33 +56,36 @@ proc setParentWindow*(window: pointer) =
   ## so there is nothing to store.
   discard
 
-proc openFile*(extensions: string): string =
+proc openFile*(extensions, startDir: string): string =
   ensureGtk()
   let dlg = gtk_file_chooser_dialog_new(gtkLabel("_Open"), parent(),
     GTK_FILE_CHOOSER_ACTION_OPEN, nil)
   discard gtk_dialog_add_button(dlg, gtkLabel("_Cancel"), GTK_RESPONSE_CANCEL)
   discard gtk_dialog_add_button(dlg, gtkLabel("_Open"), GTK_RESPONSE_ACCEPT)
+  setStartDir(dlg, startDir)
   addFilters(dlg, extensions)
   runFilename(dlg)
 
-proc saveFile*(extensions, suggestedName: string): string =
+proc saveFile*(extensions, suggestedName, startDir: string): string =
   ensureGtk()
   let dlg = gtk_file_chooser_dialog_new(gtkLabel("_Save"), parent(),
     GTK_FILE_CHOOSER_ACTION_SAVE, nil)
   discard gtk_dialog_add_button(dlg, gtkLabel("_Cancel"), GTK_RESPONSE_CANCEL)
   discard gtk_dialog_add_button(dlg, gtkLabel("_Save"), GTK_RESPONSE_ACCEPT)
   gtk_file_chooser_set_do_overwrite_confirmation(dlg, 1)
+  setStartDir(dlg, startDir)
   if suggestedName.len > 0:
     gtk_file_chooser_set_current_name(dlg, suggestedName.cstring)
   addFilters(dlg, extensions)
   runFilename(dlg)
 
-proc chooseFolder*(title, prompt: string): string =
+proc chooseFolder*(title, prompt, startDir: string): string =
   ensureGtk()
   let dlg = gtk_file_chooser_dialog_new(title.cstring, parent(),
     GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, nil)
   discard gtk_dialog_add_button(dlg, gtkLabel("_Cancel"), GTK_RESPONSE_CANCEL)
   discard gtk_dialog_add_button(dlg, prompt.cstring, GTK_RESPONSE_ACCEPT)
+  setStartDir(dlg, startDir)
   runFilename(dlg)
 
 proc message*(title, body, okLabel: string) =

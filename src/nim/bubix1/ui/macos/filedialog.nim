@@ -11,11 +11,11 @@
 
 proc bx1DialogSetParent(window: pointer)
   {.importc: "bx1_dialog_set_parent", cdecl.}
-proc bx1DialogOpenFile(extensions: cstring): cstring
+proc bx1DialogOpenFile(extensions, startDir: cstring): cstring
   {.importc: "bx1_dialog_open_file", cdecl.}
-proc bx1DialogSaveFile(extensions, suggestedName: cstring): cstring
+proc bx1DialogSaveFile(extensions, suggestedName, startDir: cstring): cstring
   {.importc: "bx1_dialog_save_file", cdecl.}
-proc bx1DialogChooseFolder(title, prompt: cstring): cstring
+proc bx1DialogChooseFolder(title, prompt, startDir: cstring): cstring
   {.importc: "bx1_dialog_choose_folder", cdecl.}
 proc bx1DialogFree(text: cstring) {.importc: "bx1_dialog_free", cdecl.}
 proc bx1DialogMessage(title, body, okLabel: cstring)
@@ -36,14 +36,18 @@ proc setParentWindow*(window: pointer) =
   ## `window` is the `SDL_Window*` the dialogs hang their sheets from.
   bx1DialogSetParent(window)
 
-proc openFile*(extensions: string): string =
-  takeString(bx1DialogOpenFile(extensions.cstring))
+proc openFile*(extensions, startDir: string): string =
+  ## An empty `startDir` leaves the panel where AppKit last put it, which
+  ## it remembers per application - see set_start_dir in filedialog.m.
+  takeString(bx1DialogOpenFile(extensions.cstring, startDir.cstring))
 
-proc saveFile*(extensions, suggestedName: string): string =
-  takeString(bx1DialogSaveFile(extensions.cstring, suggestedName.cstring))
+proc saveFile*(extensions, suggestedName, startDir: string): string =
+  takeString(bx1DialogSaveFile(extensions.cstring, suggestedName.cstring,
+                               startDir.cstring))
 
-proc chooseFolder*(title, prompt: string): string =
-  takeString(bx1DialogChooseFolder(title.cstring, prompt.cstring))
+proc chooseFolder*(title, prompt, startDir: string): string =
+  takeString(bx1DialogChooseFolder(title.cstring, prompt.cstring,
+                                   startDir.cstring))
 
 proc message*(title, body, okLabel: string) =
   bx1DialogMessage(title.cstring, body.cstring, okLabel.cstring)
