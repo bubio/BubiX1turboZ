@@ -62,6 +62,25 @@ const
   # GtkDialogFlags
   GTK_DIALOG_MODAL* = 1'i32
   GTK_DIALOG_DESTROY_WITH_PARENT* = 2'i32
+  # GtkPolicyType
+  GTK_POLICY_ALWAYS* = 0'i32
+  GTK_POLICY_AUTOMATIC* = 1'i32
+  GTK_POLICY_NEVER* = 2'i32
+  # GtkReliefStyle
+  GTK_RELIEF_NORMAL* = 0'i32
+  GTK_RELIEF_NONE* = 2'i32
+  # GtkAlign
+  GTK_ALIGN_FILL* = 0'i32
+  GTK_ALIGN_START* = 1'i32
+  GTK_ALIGN_END* = 2'i32
+  GTK_ALIGN_CENTER* = 3'i32
+  # PangoEllipsizeMode
+  PANGO_ELLIPSIZE_END* = 3'i32
+  # GdkInterpType
+  GDK_INTERP_NEAREST* = 0'i32
+  # The priority an application's own style sheet is loaded at, above the
+  # theme's rules and below the user's.
+  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION* = 600'u32
 
 {.push importc, cdecl.}
 
@@ -163,6 +182,31 @@ proc gtk_widget_set_margin_start*(widget: GtkWidget, margin: cint)
 proc gtk_widget_set_margin_end*(widget: GtkWidget, margin: cint)
 proc gtk_widget_set_margin_top*(widget: GtkWidget, margin: cint)
 proc gtk_widget_set_margin_bottom*(widget: GtkWidget, margin: cint)
+proc gtk_grid_set_row_spacing*(grid: GtkWidget, spacing: cuint)
+proc gtk_grid_set_column_spacing*(grid: GtkWidget, spacing: cuint)
+proc gtk_widget_set_halign*(widget: GtkWidget, align: cint)
+proc gtk_widget_set_valign*(widget: GtkWidget, align: cint)
+proc gtk_widget_set_hexpand*(widget: GtkWidget, expand: Gboolean)
+proc gtk_widget_set_opacity*(widget: GtkWidget, opacity: cdouble)
+proc gtk_button_set_relief*(button: GtkWidget, relief: cint)
+proc gtk_label_set_xalign*(label: GtkWidget, xalign: cfloat)
+proc gtk_label_set_ellipsize*(label: GtkWidget, mode: cint)
+proc gtk_label_set_max_width_chars*(label: GtkWidget, chars: cint)
+proc gtk_separator_new*(orientation: cint): GtkWidget
+proc gtk_overlay_new*(): GtkWidget
+proc gtk_overlay_add_overlay*(overlay, widget: GtkWidget)
+proc gtk_scrolled_window_new*(hadjustment, vadjustment: GtkWidget): GtkWidget
+proc gtk_scrolled_window_set_policy*(window: GtkWidget, hpolicy, vpolicy: cint)
+proc gtk_window_set_default_size*(window: GtkWidget, width, height: cint)
+
+# Styling. The picker paints its own cells, which no GTK theme provides.
+proc gtk_css_provider_new*(): GtkWidget
+proc gtk_css_provider_load_from_data*(provider: GtkWidget, data: cstring,
+  length: clong, error: ptr pointer): Gboolean
+proc gtk_style_context_add_provider_for_screen*(screen, provider: GtkWidget,
+  priority: cuint)
+proc gtk_widget_get_style_context*(widget: GtkWidget): GtkWidget
+proc gtk_style_context_add_class*(context: GtkWidget, className: cstring)
 
 proc gtk_clipboard_get*(selection: GdkAtom): GtkWidget
 proc gtk_clipboard_wait_for_text*(clipboard: GtkWidget): cstring
@@ -174,6 +218,7 @@ proc gdk_x11_window_get_xid*(window: GdkWindow): Window
 
 {.push header: "<gdk/gdk.h>".}
 proc gdk_atom_intern*(atomName: cstring, onlyIfExists: Gboolean): GdkAtom
+proc gdk_screen_get_default*(): GtkWidget
 {.pop.}
 
 {.push header: "<gdk-pixbuf/gdk-pixbuf.h>".}
@@ -182,6 +227,8 @@ proc gdk_pixbuf_loader_write*(loader: GtkWidget, buf: ptr byte, count: csize_t,
   error: ptr pointer): Gboolean
 proc gdk_pixbuf_loader_close*(loader: GtkWidget, error: ptr pointer): Gboolean
 proc gdk_pixbuf_loader_get_pixbuf*(loader: GtkWidget): GtkWidget
+proc gdk_pixbuf_scale_simple*(pixbuf: GtkWidget, width, height: cint,
+  interpType: cint): GtkWidget
 {.pop.}
 
 {.push header: "<glib-object.h>".}
