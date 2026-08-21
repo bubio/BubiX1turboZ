@@ -42,6 +42,7 @@ type
     msgRecentFiles, msgRecentNone, msgClearRecentFiles,
     msgExportExtractedDots, msgExportTitle, msgExportChooseFolder,
     msgExportDone, msgExportNothing, msgExportFailed,
+    msgArchiveFailedTitle, msgArchiveNoTool, msgArchiveFailed,
     # --- Device menu ---
     msgMenuDevice, msgKeyboard, msgKeyboardModeA, msgKeyboardModeB,
     msgSound, msgPlayFddNoise, msgDisplay, msgHighResolution, msgStandard,
@@ -127,6 +128,13 @@ const
     msgExportNothing: "No archive has been expanded yet, so there is " &
       "nothing to export.",
     msgExportFailed: "Could not finish the export: $1",
+    msgArchiveFailedTitle: "Could not open the archive",
+    msgArchiveNoTool: "$1 cannot be expanded because this computer has no " &
+      "program that reads .7z and .zip files. Install bsdtar (the " &
+      "libarchive-tools package) or 7-Zip (p7zip-full), then open the " &
+      "archive again.",
+    msgArchiveFailed: "$1 could not be opened. The file may be damaged, " &
+      "or in a format this computer's archiver does not read.",
 
     msgMenuDevice: "Device",
     msgKeyboard: "Keyboard",
@@ -285,6 +293,13 @@ const
     msgExportDone: "$2 個のアーカイブから $1 枚のディスクを書き出しました。",
     msgExportNothing: "展開済みのアーカイブがないため、書き出すものがありません。",
     msgExportFailed: "書き出しを完了できませんでした: $1",
+    msgArchiveFailedTitle: "アーカイブを開けませんでした",
+    msgArchiveNoTool: ".7z / .zip を読めるプログラムがこのコンピューターに" &
+      "ないため、$1 を展開できません。bsdtar（libarchive-tools パッケージ）" &
+      "または 7-Zip（p7zip-full）をインストールしてから、もう一度開いて" &
+      "ください。",
+    msgArchiveFailed: "$1 を開けませんでした。ファイルが壊れているか、" &
+      "このコンピューターのアーカイバーが読めない形式の可能性があります。",
 
     msgMenuDevice: "デバイス",
     msgKeyboard: "キーボード",

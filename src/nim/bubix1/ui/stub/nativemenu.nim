@@ -18,3 +18,4 @@ proc setChecked*(tag: cint, checked: cint) = discard
 proc getChecked*(tag: cint): cint = 0
 proc setEnabled*(tag: cint, enabled: cint) = discard
 proc setItemTitle*(tag: cint, title: cstring) = discard
+proc handleAccelerator*(key: cint, ctrl, shift, alt, gui: cint): cint = 0

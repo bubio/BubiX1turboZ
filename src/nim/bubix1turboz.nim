@@ -72,6 +72,7 @@ import bubix1/ui/clipboard
 import bubix1/ui/filedialog
 import bubix1/ui/statepicker
 import bubix1/ui/volumepanel
+import bubix1/ui/hostwindow
 
 const
   ScreenWidth = 640
@@ -389,6 +390,19 @@ proc main() =
   if h == nil:
     fail "bx1_create failed (place BIOS ROMs in " & paths.romsDir() & ")"
   var recent = recentfiles.load(paths.recentFilesPath())
+  # Where the panels open. A title is opened from wherever the last one
+  # came from, so the recent list already answers that and no key of its
+  # own is needed; writing a disk out is a different question with a
+  # different answer, and those two do get remembered here.
+  var lastSaveDir = hostCfg.getStr("LastSaveDir", "")
+  var lastExportDir = hostCfg.getStr("LastExportDir", "")
+
+  proc lastDiskDir(): string =
+    ## The folder the most recently opened title came from, or "" while
+    ## there is no history - the panel then opens wherever the platform
+    ## would have put it (see ui/filedialog.nim).
+    if recent.len > 0: recent[0].parentDir() else: ""
+
   setRunning(true)
 
   proc vmSoundType(): int =
@@ -508,8 +522,8 @@ proc main() =
     ## drawFrame works in real window points and computes that itself.
     if sdlWin == nil:
       return
-    sdlWin.setSize((ScreenWidth * windowScale).cint,
-                   (guestHeight() * windowScale).cint + statusBarHeight())
+    hostwindow.setSize(sdlWin, (ScreenWidth * windowScale).cint,
+                       (guestHeight() * windowScale).cint + statusBarHeight())
 
   proc maxWindowScale(): int =
     ## How many "Window xN" items Host > Screen offers. The original builds
@@ -699,10 +713,22 @@ proc main() =
     # OSError, and OSError is not an IOError - so an unreadable or
     # just-deleted archive would escape an IOError-only handler and take the
     # app down instead of printing the warning this proc exists for.
+    #
+    # The failure is reported in a dialog and not only on stderr: the app
+    # is started from the Finder/desktop far more often than from a
+    # terminal, and a drop that silently loads nothing looks like the
+    # drop itself was not noticed.
     try:
       result = archive.resolveMedia(path)
+    except archive.ArchiveToolMissingError as e:
+      stderr.writeLine "bubix1turboz: " & e.msg
+      filedialog.message(tr(msgArchiveFailedTitle),
+                         trf(msgArchiveNoTool, path.extractFilename()))
+      result = @[]
     except CatchableError as e:
       stderr.writeLine "bubix1turboz: " & e.msg
+      filedialog.message(tr(msgArchiveFailedTitle),
+                         trf(msgArchiveFailed, path.extractFilename()))
       result = @[]
 
   proc floppyImagesOf(path: string): seq[string] =
@@ -1289,14 +1315,14 @@ proc main() =
     # .d88 - loadMedia works out which it is - rather than through a
     # separate "open archive" item the user would have to choose between.
     result = proc () =
-      let path = filedialog.openFile(filedialog.DiskExtensions)
+      let path = filedialog.openFile(filedialog.DiskExtensions, lastDiskDir())
       if path.len > 0:
         loadMedia(path, startDrive = drv)
   proc insertBothAction(): MenuAction =
     ## Bubilator88's "Drive 1&2" mount, which is how a 2-disk game is
     ## normally started: no chooser, first disk in FD0, second in FD1.
     result = proc () =
-      let path = filedialog.openFile(filedialog.DiskExtensions)
+      let path = filedialog.openFile(filedialog.DiskExtensions, lastDiskDir())
       if path.len > 0:
         loadMedia(path, bothDrives = true)
   proc makeEjectAction(drv: int): MenuAction =
@@ -1307,8 +1333,10 @@ proc main() =
     ## of the request rather than something to infer. (Bubilator88 has one
     ## Create Blank Disk at the top and picks the first free drive itself.)
     result = proc () =
-      let path = filedialog.saveFile(filedialog.BlankDiskExtensions, "blank.d88")
+      let path = filedialog.saveFile(filedialog.BlankDiskExtensions, "blank.d88",
+                                     lastSaveDir)
       if path.len > 0 and bx1CreateBlankFloppyDisk(h, path.cstring, mediaType.cint) != 0:
+        lastSaveDir = path.parentDir()
         driveSet[drv] = diskset.build([path])
         driveSource[drv] = path
         discard mountAt(drv, 0)
@@ -1392,9 +1420,10 @@ proc main() =
   # the way out of it. Bubilator88 answers the same problem the same way
   # (Export Cached Disks…); see archive.exportCache.
   diskMenu.addItem(tr(msgExportExtractedDots), proc () =
-    let dest = filedialog.chooseFolder(tr(msgExportChooseFolder))
+    let dest = filedialog.chooseFolder(tr(msgExportChooseFolder), lastExportDir)
     if dest.len == 0:
       return
+    lastExportDir = dest
     try:
       let done = archive.exportCache(dest)
       if done.archives == 0:
@@ -1736,7 +1765,7 @@ proc main() =
 
   proc applyFullscreen(on: bool) =
     if sdlWin != nil:
-      discard sdlWin.setFullscreen(if on: SDL_WINDOW_FULLSCREEN_DESKTOP else: 0)
+      hostwindow.setFullscreen(sdlWin, on)
     isFullscreen = on
     if not on:
       # Leaving fullscreen restores whatever window scale is selected: SDL
@@ -1926,14 +1955,17 @@ proc main() =
   renderer = createRenderer(sdlWin, -1, Renderer_Accelerated)
   if renderer == nil:
     fail "SDL_CreateRenderer failed: " & $getError()
-  sdlWin.showWindow()
+  # Show the window. On macOS this is SDL_ShowWindow; on Linux it embeds the
+  # surface under the GTK menu bar, restoring the remembered position on the
+  # top-level that carries it (see bubix1/ui/hostwindow.nim).
+  hostwindow.present(sdlWin, windowX, windowY, restorePos)
   # Now that there is a window, the native dialogs can open as sheets on it
   # (macOS); the other backends have no use for this and ignore it.
   filedialog.setParentWindow(cast[pointer](sdlWin))
-  # Whatever SDL made of the request above is the position to remember from
-  # here on, so that a run which never moves the window still writes back a
-  # position it actually had.
-  sdlWin.getPosition(windowX, windowY)
+  # Whatever the window system made of the request above is the position to
+  # remember from here on, so that a run which never moves the window still
+  # writes back a position it actually had.
+  hostwindow.getPosition(sdlWin, windowX, windowY)
 
   # Logged because the crash above is specific to one backend: if it ever
   # comes back, the first question is which renderer was in use.
@@ -2131,16 +2163,46 @@ proc main() =
     inc drawnFrames
 
   var ev = sdl2.defaultEvent
+  # Set while the key of a menu accelerator is still held: the auto-repeat
+  # presses that follow are swallowed rather than looked up again, so the
+  # action runs once per press of the keys and the key never reaches the
+  # guest halfway through.
+  var menuAccelHeld = false
   while running():
+    # Beside SDL's own queue, drain the host toolkit's: on Linux the menu bar
+    # and any non-modal panel live in GTK's event loop (a no-op elsewhere).
+    hostwindow.pumpEvents()
     while pollEvent(ev):
       case ev.kind
       of QuitEvent:
         setRunning(false)
       of KeyDown:
-        let vk = keymap.toVk(ev.key.keysym.scancode)
-        if vk != 0:
-          bx1KeyDown(h, vk, ev.key.repeat.cint)
+        # The menu bar gets first refusal on the keystroke. A host whose
+        # menus see key presses themselves takes none of them here (macOS);
+        # where they do not, this is the only path an accelerator has.
+        # A repeat of an accelerator is swallowed too, so that holding the
+        # keys down does not start leaking the key into the guest, but only
+        # the first press fires the action.
+        let km = ev.key.keysym.modstate.cint
+        let sym = ev.key.keysym.sym
+        var takenByMenu = false
+        if sym > 0 and sym < 0x80:
+          let ch = char(sym)
+          let ctrl = (km and KMOD_CTRL) != 0
+          let shift = (km and KMOD_SHIFT) != 0
+          let alt = (km and KMOD_ALT) != 0
+          let gui = (km and KMOD_GUI) != 0
+          if ev.key.repeat:
+            takenByMenu = menuAccelHeld
+          else:
+            takenByMenu = nativemenu.handleAccelerator(ch, ctrl, shift, alt, gui)
+            menuAccelHeld = takenByMenu
+        if not takenByMenu:
+          let vk = keymap.toVk(ev.key.keysym.scancode)
+          if vk != 0:
+            bx1KeyDown(h, vk, ev.key.repeat.cint)
       of KeyUp:
+        menuAccelHeld = false
         let vk = keymap.toVk(ev.key.keysym.scancode)
         if vk != 0:
           bx1KeyUp(h, vk)
@@ -2278,12 +2340,21 @@ proc main() =
   hostCfg.setStr("UILanguage", uiLanguage)
   # The per-device levels live in the core's own config.ini; these two are
   # this port's additions and have nowhere to go there.
+  # Only once there is something to remember: an empty value would just be
+  # a key the next launch has to fall back from anyway.
+  if lastSaveDir.len > 0:
+    hostCfg.setStr("LastSaveDir", lastSaveDir)
+  if lastExportDir.len > 0:
+    hostCfg.setStr("LastExportDir", lastExportDir)
   hostCfg.setInt("VolumeMaster", volumeMaster)
   hostCfg.setBool("VolumeLinkLR", volumeLinked)
   # Checked once more on the way out: the guard on WindowEvent_Moved cannot
   # catch a move that lands off-screen for the *next* run, and an
   # unreachable position is worse than none at all - leaving the keys as
-  # they were means the next launch falls back to SDL's own placement.
+  # they were means the next launch falls back to SDL's own placement. Read
+  # the position afresh here too: on Linux moves arrive at the GTK top-level,
+  # not as SDL WindowEvent_Moved, so windowX/windowY are otherwise stale.
+  hostwindow.getPosition(sdlWin, windowX, windowY)
   if windowPosOnScreen(windowX, windowY):
     hostCfg.setInt("WindowX", windowX.int)
     hostCfg.setInt("WindowY", windowY.int)
@@ -2301,7 +2372,7 @@ proc main() =
   renderer.destroy()
   # No dialog can outlive the window it would hang from.
   filedialog.setParentWindow(nil)
-  sdlWin.destroy()
+  hostwindow.destroy(sdlWin)
   sdl2.quit()
   bx1Destroy(h)
 

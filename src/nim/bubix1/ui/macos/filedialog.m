@@ -212,7 +212,25 @@ static void set_allowed_types(NSSavePanel *panel, const char *extensions)
 	}
 }
 
-char *bx1_dialog_open_file(const char *extensions)
+/*
+	Opens `panel` on `start_dir` when the caller named one.
+
+	With none, the panel is left alone rather than pointed anywhere: AppKit
+	then reopens it where the last one stood, which it remembers for this
+	application across launches. That is already the behaviour a caller
+	without a folder of its own is asking for, so overriding it with a
+	guess would only make things worse.
+*/
+static void set_start_dir(NSSavePanel *panel, const char *start_dir)
+{
+	if (start_dir == NULL || start_dir[0] == '\0') {
+		return;
+	}
+	[panel setDirectoryURL:[NSURL fileURLWithPath:
+		[NSString stringWithUTF8String:start_dir] isDirectory:YES]];
+}
+
+char *bx1_dialog_open_file(const char *extensions, const char *start_dir)
 {
 	@autoreleasepool {
 		NSOpenPanel *panel = [NSOpenPanel openPanel];
@@ -222,6 +240,7 @@ char *bx1_dialog_open_file(const char *extensions)
 		[panel setResolvesAliases:YES];
 		[panel setTreatsFilePackagesAsDirectories:YES];
 		set_allowed_types(panel, extensions);
+		set_start_dir(panel, start_dir);
 		if (run_panel(panel) != NSModalResponseOK) {
 			return NULL;
 		}
@@ -229,7 +248,8 @@ char *bx1_dialog_open_file(const char *extensions)
 	}
 }
 
-char *bx1_dialog_save_file(const char *extensions, const char *suggested_name)
+char *bx1_dialog_save_file(const char *extensions, const char *suggested_name,
+                           const char *start_dir)
 {
 	@autoreleasepool {
 		NSSavePanel *panel = [NSSavePanel savePanel];
@@ -237,6 +257,7 @@ char *bx1_dialog_save_file(const char *extensions, const char *suggested_name)
 		[panel setExtensionHidden:NO];
 		[panel setTreatsFilePackagesAsDirectories:YES];
 		set_allowed_types(panel, extensions);
+		set_start_dir(panel, start_dir);
 		if (suggested_name != NULL && suggested_name[0] != '\0') {
 			[panel setNameFieldStringValue:[NSString stringWithUTF8String:suggested_name]];
 		}
@@ -255,7 +276,8 @@ char *bx1_dialog_save_file(const char *extensions, const char *suggested_name)
 	chooser can say what it is about to do - there is no file name field to
 	label. Passed down from the message catalog like every other word here.
 */
-char *bx1_dialog_choose_folder(const char *title, const char *prompt)
+char *bx1_dialog_choose_folder(const char *title, const char *prompt,
+                               const char *start_dir)
 {
 	@autoreleasepool {
 		NSOpenPanel *panel = [NSOpenPanel openPanel];
@@ -270,6 +292,7 @@ char *bx1_dialog_choose_folder(const char *title, const char *prompt)
 		if (prompt != NULL && prompt[0] != '\0') {
 			[panel setPrompt:[NSString stringWithUTF8String:prompt]];
 		}
+		set_start_dir(panel, start_dir);
 		if (run_panel(panel) != NSModalResponseOK) {
 			return NULL;
 		}

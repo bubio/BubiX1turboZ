@@ -18,6 +18,8 @@
 
 when defined(macosx):
   from ./macos/volumepanel as backend import nil
+elif defined(linux):
+  from ./linux/volumepanel as backend import nil
 else:
   from ./stub/volumepanel as backend import nil
 

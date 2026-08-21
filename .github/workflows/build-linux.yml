@@ -1,0 +1,118 @@
+name: Build Linux (amd64/arm64)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'assets/**'
+      - '*.nimble'
+      - 'mise.toml'
+      - 'scripts/**'
+      - '.github/workflows/build-linux.yml'
+      - '.github/workflows/publish-release-assets.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'assets/**'
+      - '*.nimble'
+      - 'mise.toml'
+      - 'scripts/**'
+      - '.github/workflows/build-linux.yml'
+      - '.github/workflows/publish-release-assets.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # One native runner per architecture: no cross-compilation, so the C++
+    # core and the Nim binary are built by the same toolchain that will run
+    # them. arm64 uses GitHub's Arm Linux runner.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: amd64
+          - runner: ubuntu-22.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    # SDL2 and GTK3 development files, and zlib for bubix1/deflate.nim. The
+    # AppImage bundles SDL2 and finds GTK on the host; the .deb and .rpm
+    # depend on both. Ubuntu 22.04 is the oldest supported target (README.md).
+    # rpm brings rpmbuild, which packages the same staged tree as the .deb.
+    - name: Install system libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libsdl2-dev libgtk-3-dev zlib1g-dev \
+          imagemagick desktop-file-utils rpm
+
+    # mise.toml is the single source of truth for the Nim version, shared
+    # with local builds. Same setup as build-macos.yml - see its comments.
+    - name: Set up mise
+      uses: jdx/mise-action@v2
+      with:
+        install: false
+
+    - name: Install Nim toolchain
+      run: |
+        mise trust
+        mise plugins install nim https://github.com/asdf-community/asdf-nim
+        mise install
+
+    # -d: dependencies only, read from bubix1turboz.nimble, which pins them
+    # to the versions this app is verified against.
+    - name: Install Nim dependencies
+      run: mise exec -- nimble install -d -y
+
+    # Always produce all three artifacts: a broken package is worth catching
+    # on a pull request, not only at release time.
+    - name: Build AppImage, .deb and .rpm
+      run: ./scripts/build_linux.sh --appimage --deb --rpm
+
+    - name: Upload AppImage artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: bubix1turboz-linux-${{ matrix.arch }}-appimage
+        path: build/bubix1turboz-*-linux-${{ matrix.arch }}.AppImage
+        if-no-files-found: error
+
+    - name: Upload .deb artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: bubix1turboz-linux-${{ matrix.arch }}-deb
+        path: build/bubix1turboz-*-linux-${{ matrix.arch }}.deb
+        if-no-files-found: error
+
+    - name: Upload .rpm artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: bubix1turboz-linux-${{ matrix.arch }}-rpm
+        path: build/bubix1turboz-*-linux-${{ matrix.arch }}.rpm
+        if-no-files-found: error
+
+  publish-release:
+    if: github.event_name == 'release'
+    needs: build
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-release-assets.yml
+    with:
+      asset-patterns: |
+        *.AppImage
+        *.deb
+        *.rpm

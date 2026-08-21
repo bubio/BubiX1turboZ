@@ -29,3 +29,9 @@ proc getChecked*(tag: cint): cint {.importc: "bx1_nmenu_get_checked", cdecl.}
 proc setEnabled*(tag: cint, enabled: cint) {.importc: "bx1_nmenu_set_enabled", cdecl.}
 proc setItemTitle*(tag: cint, title: cstring)
   {.importc: "bx1_nmenu_set_item_title", cdecl.}
+
+proc handleAccelerator*(key: cint, ctrl, shift, alt, gui: cint): cint =
+  ## AppKit matches a key equivalent itself, before the key press ever
+  ## reaches the application's event loop, so there is nothing to match
+  ## here - and matching it a second time would run the action twice.
+  0
