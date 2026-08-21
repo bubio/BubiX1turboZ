@@ -57,8 +57,11 @@ else
   # library resolved at link time. The GTK backends under bubix1/ui/linux
   # carry their own pkg-config flags, so nothing GTK is named here. -ldl and
   # -lpthread cover the core's OSD threads and the sdl2 binding's dlopen.
+  # The rpath is single-quoted: Nim runs the link command through a shell,
+  # which would otherwise expand $ORIGIN to nothing and leave the AppImage
+  # unable to find its bundled SDL2.
   PASSC="$(pkg-config --cflags sdl2) -Isrc/bridge"
-  PASSL="$(pwd)/$LIB $(pkg-config --libs sdl2) -Wl,-rpath,$RPATH -lstdc++ -lm -ldl -lpthread"
+  PASSL="$(pwd)/$LIB $(pkg-config --libs sdl2) -Wl,-rpath,'$RPATH' -lstdc++ -lm -ldl -lpthread"
 fi
 
 mise exec -- nim c -d:release --hints:off \
