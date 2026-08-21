@@ -96,19 +96,25 @@ jobs:
         plutil -p build/BubiX1turboZ.app/Contents/Info.plist \
           | grep -q CFBundleIconName
 
+    # The .app has to be zipped by hand: upload-artifact walks the bundle
+    # and would drop the symlinks inside SDL2.framework. The inner name
+    # must differ from the artifact name below - GitHub wraps artifacts in
+    # a zip named after the artifact, and two nested zips of the same name
+    # leave the user with a download that unpacks into "... 2.zip" beside
+    # itself, which Archive Utility then fails to expand.
     - name: Package .app (zip)
       if: github.event_name != 'release'
       run: |
         ditto -c -k --sequesterRsrc --keepParent \
           build/BubiX1turboZ.app \
-          build/bubix1turboz-macos-arm64.zip
+          build/BubiX1turboZ.app.zip
 
     - name: Upload .app artifact
       if: github.event_name != 'release'
       uses: actions/upload-artifact@v4
       with:
-        name: bubix1turboz-macos-arm64
-        path: build/bubix1turboz-macos-arm64.zip
+        name: bubix1turboz-macos-arm64-app
+        path: build/BubiX1turboZ.app.zip
         if-no-files-found: error
 
     - name: Upload dmg artifact
