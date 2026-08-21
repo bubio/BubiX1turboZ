@@ -68,8 +68,8 @@ BubiX1turboZ は、[Common Source Code Project](https://takeda-toshiya.my.coocan
 ### Linux
 
 - Ubuntu 22.04 以降（または同等のディストリビューション） / amd64・arm64
-- GTK3（`libgtk-3-0`）と SDL2。AppImage は SDL2 を同梱し GTK3 はシステムのものを使います。`.deb` は両方を依存関係として要求します。
-- `7z` / `zip` の展開には外部のアーカイバーを使います。bsdtar（`libarchive-tools`）が第一候補で、無ければ 7-Zip（`p7zip-full` の `7z` / `7za`、または `7zz`）、`zip` だけは `unzip` でも展開できます。`.deb` は `libarchive-tools | p7zip-full` を依存関係として要求します。AppImage で使う場合はどちらかをシステムに入れてください（生のディスクイメージには不要です）。いずれも無い状態でアーカイブを開くと、何を入れればよいかを伝えるダイアログが出ます。
+- GTK3（`libgtk-3-0` / `gtk3`）と SDL2。AppImage は SDL2 を同梱し GTK3 はシステムのものを使います。`.deb` と `.rpm` は両方を依存関係として要求します。
+- `7z` / `zip` の展開には外部のアーカイバーを使います。bsdtar（`libarchive-tools`）が第一候補で、無ければ 7-Zip（`p7zip-full` の `7z` / `7za`、または `7zz`）、`zip` だけは `unzip` でも展開できます。`.deb` は `libarchive-tools | p7zip-full` を依存関係として要求し、`.rpm` は `bsdtar` を推奨（Recommends）します。AppImage で使う場合はどちらかをシステムに入れてください（生のディスクイメージには不要です）。いずれも無い状態でアーカイブを開くと、何を入れればよいかを伝えるダイアログが出ます。
 - X11 セッション（メニューバー埋め込みは X11 のウィンドウ再ペアレントを使います）
 
 Windows 11 (x86_64) は移植先として設計に織り込んであり、CI でも `nim check` によるコンパイル検査を行っていますが、**現時点でバイナリを提供しているのは macOS (Apple シリコン) と Linux (amd64・arm64) です**。Intel Mac 向けとユニバーサルバイナリ、Windows 版も今後の対応です。
@@ -82,7 +82,7 @@ Windows 11 (x86_64) は移植先として設計に織り込んであり、CI で
 
 ### Linux
 
-[Releases](https://github.com/bubio/BubiX1turboZ/releases) から AppImage または `.deb` をダウンロードします。
+[Releases](https://github.com/bubio/BubiX1turboZ/releases) から AppImage・`.deb`・`.rpm` のいずれかをダウンロードします。
 
 - **AppImage**: 実行権限を付けてそのまま起動できます。追加のインストールは不要です。
   ```sh
@@ -93,14 +93,18 @@ Windows 11 (x86_64) は移植先として設計に織り込んであり、CI で
   ```sh
   sudo apt install ./bubix1turboz-*-linux-*.deb
   ```
+- **.rpm**（Fedora / RHEL 系、openSUSE）:
+  ```sh
+  sudo dnf install ./bubix1turboz-*-linux-*.rpm   # openSUSE なら sudo zypper install
+  ```
 
 ### CI 生成物一覧
 
 | OS | CI Artifact 名 | Release Asset 名 |
 |---|---|---|
 | macOS (arm64) | `bubix1turboz-macos-arm64.zip` | `bubix1turboz-{version}-macos-arm64.dmg` |
-| Linux (amd64) | `bubix1turboz-linux-amd64-appimage` / `-deb` | `bubix1turboz-{version}-linux-amd64.AppImage` / `.deb` |
-| Linux (arm64) | `bubix1turboz-linux-arm64-appimage` / `-deb` | `bubix1turboz-{version}-linux-arm64.AppImage` / `.deb` |
+| Linux (amd64) | `bubix1turboz-linux-amd64-appimage` / `-deb` / `-rpm` | `bubix1turboz-{version}-linux-amd64.AppImage` / `.deb` / `.rpm` |
+| Linux (arm64) | `bubix1turboz-linux-arm64-appimage` / `-deb` / `-rpm` | `bubix1turboz-{version}-linux-arm64.AppImage` / `.deb` / `.rpm` |
 
 > **macOS での注意**: このアプリは Apple Developer ID による署名・公証（notarization）を受けていないため、初回起動時に Gatekeeper によってブロックされます。以下のいずれかの方法で回避できます：
 >
@@ -193,11 +197,12 @@ SDL2 は公式配布の `SDL2.framework` をビルド時に自動取得するた
 ```sh
 sudo apt install libsdl2-dev libgtk-3-dev zlib1g-dev
 
-# AppImage と .deb（パッケージング用に imagemagick も使います）
-./scripts/build_linux.sh --appimage --deb
+# AppImage・.deb・.rpm（パッケージング用に imagemagick と rpm も使います）
+sudo apt install imagemagick rpm
+./scripts/build_linux.sh --appimage --deb --rpm
 ```
 
-`build/bubix1turboz-<version>-linux-<arch>.AppImage` と同 `.deb` が生成されます（AppImage の生成には `appimagetool` を自動取得します）。
+`build/bubix1turboz-<version>-linux-<arch>.AppImage` と同 `.deb`・`.rpm` が生成されます（AppImage の生成には `appimagetool` を自動取得します）。`.rpm` は Debian 系でも `rpmbuild`（`rpm` パッケージ）さえあれば作れます。
 
 アプリ本体だけを繰り返しビルドする場合:
 
