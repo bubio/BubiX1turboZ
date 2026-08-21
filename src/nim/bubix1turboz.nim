@@ -2163,6 +2163,11 @@ proc main() =
     inc drawnFrames
 
   var ev = sdl2.defaultEvent
+  # Set while the key of a menu accelerator is still held: the auto-repeat
+  # presses that follow are swallowed rather than looked up again, so the
+  # action runs once per press of the keys and the key never reaches the
+  # guest halfway through.
+  var menuAccelHeld = false
   while running():
     # Beside SDL's own queue, drain the host toolkit's: on Linux the menu bar
     # and any non-modal panel live in GTK's event loop (a no-op elsewhere).
@@ -2172,10 +2177,32 @@ proc main() =
       of QuitEvent:
         setRunning(false)
       of KeyDown:
-        let vk = keymap.toVk(ev.key.keysym.scancode)
-        if vk != 0:
-          bx1KeyDown(h, vk, ev.key.repeat.cint)
+        # The menu bar gets first refusal on the keystroke. A host whose
+        # menus see key presses themselves takes none of them here (macOS);
+        # where they do not, this is the only path an accelerator has.
+        # A repeat of an accelerator is swallowed too, so that holding the
+        # keys down does not start leaking the key into the guest, but only
+        # the first press fires the action.
+        let km = ev.key.keysym.modstate.cint
+        let sym = ev.key.keysym.sym
+        var takenByMenu = false
+        if sym > 0 and sym < 0x80:
+          let ch = char(sym)
+          let ctrl = (km and KMOD_CTRL) != 0
+          let shift = (km and KMOD_SHIFT) != 0
+          let alt = (km and KMOD_ALT) != 0
+          let gui = (km and KMOD_GUI) != 0
+          if ev.key.repeat:
+            takenByMenu = menuAccelHeld
+          else:
+            takenByMenu = nativemenu.handleAccelerator(ch, ctrl, shift, alt, gui)
+            menuAccelHeld = takenByMenu
+        if not takenByMenu:
+          let vk = keymap.toVk(ev.key.keysym.scancode)
+          if vk != 0:
+            bx1KeyDown(h, vk, ev.key.repeat.cint)
       of KeyUp:
+        menuAccelHeld = false
         let vk = keymap.toVk(ev.key.keysym.scancode)
         if vk != 0:
           bx1KeyUp(h, vk)

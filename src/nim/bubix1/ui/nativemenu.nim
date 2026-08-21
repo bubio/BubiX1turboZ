@@ -158,3 +158,18 @@ proc `enabled=`*(item: MenuItemRef, value: bool) =
 
 proc `title=`*(item: MenuItemRef, value: string) =
   backend.setItemTitle(item.tag, value.cstring)
+
+proc handleAccelerator*(ch: char, ctrl, shift, alt, gui: bool): bool =
+  ## Offers a key press to the menu bar's keyboard equivalents, ahead of
+  ## whatever else the application would do with it. True if an item took
+  ## it, in which case the key press is spent and must go no further.
+  ##
+  ## Needed because not every host delivers key presses to its menus by
+  ## itself: on macOS AppKit fires an equivalent before the application
+  ## ever sees the event and this is a no-op, while on Linux the keyboard
+  ## focus belongs to the SDL window and the menu bar depends on this call
+  ## entirely. The modifier flags are the ones physically held down, so
+  ## the call site needs to know nothing about which of them a host uses
+  ## for its menus.
+  backend.handleAccelerator(ch.cint, ctrl.cint, shift.cint, alt.cint,
+                            gui.cint) != 0

@@ -130,8 +130,9 @@ proc embed*(display: pointer, xid: Window, width, height, x, y: cint,
   discard XMapWindow(display, xid)
   # Hand keyboard focus to the embedded window itself: it is a child now, so
   # the window manager will not focus it, and without this key events go to
-  # the GTK top-level and never reach SDL. The menu bar's own accelerators
-  # are given up in return - a known, accepted trade (see the memory note).
+  # the GTK top-level and never reach SDL. GTK therefore never sees a key
+  # press and its accelerators never fire on their own; nativemenu matches
+  # them against the key presses SDL delivers instead (handleAccelerator).
   discard XSetInputFocus(display, xid, RevertToParent, CurrentTime)
   discard XSync(display, 0)
 

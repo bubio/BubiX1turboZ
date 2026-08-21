@@ -17,7 +17,14 @@ var
   actionFn: proc (tag: cint) {.cdecl.}
   items: Table[cint, GtkWidget]      ## tag -> item, for state changes
   checkedState: Table[cint, bool]    ## the application's own idea of each tick
+  hiddenState: Table[cint, bool]     ## items collapsed out of their menu
+  enabledState: Table[cint, bool]    ## items greyed out
+  accelTags: Table[uint64, cint]     ## keyval + modifiers -> tag, for handleAccelerator
   suppress = false                   ## guard against set_active re-entering activate
+
+proc accelKey(keyval, mods: cuint): uint64 =
+  ## One lookup key out of a key value and a GDK modifier mask.
+  (keyval.uint64 shl 32) or mods.uint64
 
 proc onActivate(item: GtkWidget, data: Gpointer) {.cdecl.} =
   if suppress:
@@ -68,7 +75,7 @@ proc addSubmenu*(parent: pointer, title: cstring): pointer =
   gtk_menu_shell_append(cast[GtkWidget](parent), item)
   sub
 
-proc addAccelerator(item: GtkWidget, key: cstring, mods: cint) =
+proc addAccelerator(item: GtkWidget, tag: cint, key: cstring, mods: cint) =
   let s = $key
   if s.len == 0:
     return
@@ -83,6 +90,10 @@ proc addAccelerator(item: GtkWidget, key: cstring, mods: cint) =
   let keyval = ord(toLowerAscii(s[0])).cuint
   gtk_widget_add_accelerator(item, "activate", accels(), keyval, gmods,
                              GTK_ACCEL_VISIBLE)
+  # The accelerator is registered with GTK for its label in the menu, and
+  # kept here as well because GTK never gets to fire it - see
+  # handleAccelerator below.
+  accelTags[accelKey(keyval, gmods)] = tag
 
 proc addItem*(menu: pointer, title: cstring, tag: cint, key: cstring, mods: cint) =
   let item = gtk_check_menu_item_new_with_label(title)
@@ -90,7 +101,7 @@ proc addItem*(menu: pointer, title: cstring, tag: cint, key: cstring, mods: cint
   checkedState[tag] = false
   connect(item, "activate", cast[GCallback](onActivate),
           cast[Gpointer](cast[int](tag)))
-  addAccelerator(item, key, mods)
+  addAccelerator(item, tag, key, mods)
   gtk_widget_show(item)
   gtk_menu_shell_append(cast[GtkWidget](menu), item)
 
@@ -101,6 +112,7 @@ proc addSeparator*(menu: pointer, tag: cint) =
   gtk_menu_shell_append(cast[GtkWidget](menu), item)
 
 proc setHidden*(tag: cint, hidden: cint) =
+  hiddenState[tag] = hidden != 0
   let item = items.getOrDefault(tag)
   if item != nil:
     if hidden != 0: gtk_widget_hide(item)
@@ -118,6 +130,7 @@ proc getChecked*(tag: cint): cint =
   if checkedState.getOrDefault(tag): 1 else: 0
 
 proc setEnabled*(tag: cint, enabled: cint) =
+  enabledState[tag] = enabled != 0
   let item = items.getOrDefault(tag)
   if item != nil:
     gtk_widget_set_sensitive(item, enabled)
@@ -126,3 +139,36 @@ proc setItemTitle*(tag: cint, title: cstring) =
   let item = items.getOrDefault(tag)
   if item != nil:
     gtk_menu_item_set_label(item, title)
+
+proc handleAccelerator*(key: cint, ctrl, shift, alt, gui: cint): cint =
+  ## Fire the item whose keyboard equivalent this keystroke is, if any.
+  ##
+  ## GTK's own accelerator handling never runs here: X keyboard focus sits
+  ## on the embedded SDL window (gtkshell), so a key press reaches SDL and
+  ## GTK is never told about it. The application's event loop therefore
+  ## offers every key press to this, ahead of the guest machine, and it
+  ## looks the key up in the same table `addAccelerator` filled.
+  ##
+  ## `gui` (the Super key) is not a menu modifier on this platform and is
+  ## only accepted as "not pressed": a Super combination belongs to the
+  ## desktop, not to us.
+  if key <= 0 or key > 0x7f or gui != 0:
+    return 0
+  var gmods: cuint = 0
+  # ModCommand is Control here, so a menu accelerator always carries one
+  # modifier at least; a bare key press is the guest's.
+  if ctrl != 0: gmods = gmods or GDK_CONTROL_MASK
+  if shift != 0: gmods = gmods or GDK_SHIFT_MASK
+  if alt != 0: gmods = gmods or GDK_MOD1_MASK
+  if gmods == 0:
+    return 0
+  let keyval = ord(toLowerAscii(char(key))).cuint
+  let tag = accelTags.getOrDefault(accelKey(keyval, gmods), 0.cint)
+  if tag == 0 or hiddenState.getOrDefault(tag) or
+     not enabledState.getOrDefault(tag, true):
+    return 0
+  # The item was not clicked, so GTK has toggled nothing to undo: the
+  # action is called exactly as `onActivate` would call it.
+  if actionFn != nil:
+    actionFn(tag)
+  1
