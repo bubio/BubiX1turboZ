@@ -5,6 +5,12 @@
 ## wherever the window is an ordinary top-level SDL window - macOS, and the
 ## fallback anywhere a native one is not written. Only Linux overrides it, to
 ## drive the GTK top-level the SDL surface is embedded in.
+##
+## The calls below read `sdl2.op(win, ...)` rather than `win.op(...)`
+## wherever this module exports an operation under the name sdl2 uses for it.
+## A bare `win.op(...)` binds to the proc being defined here in preference to
+## sdl2's - a silent, unbounded self-recursion the compiler says nothing
+## about. Naming the module makes the target explicit.
 
 import sdl2
 
@@ -14,20 +20,16 @@ proc present*(win: WindowPtr, x, y: cint, restorePos: bool) =
   win.showWindow()
 
 proc setSize*(win: WindowPtr, width, height: cint) =
-  win.setSize(width, height)
+  sdl2.setSize(win, width, height)
 
 proc setFullscreen*(win: WindowPtr, on: bool) =
-  discard win.setFullscreen(if on: SDL_WINDOW_FULLSCREEN_DESKTOP else: 0)
+  discard sdl2.setFullscreen(win, if on: SDL_WINDOW_FULLSCREEN_DESKTOP else: 0)
 
 proc getPosition*(win: WindowPtr, x, y: var cint) =
-  win.getPosition(x, y)
+  sdl2.getPosition(win, x, y)
 
 proc destroy*(win: WindowPtr) =
-  # destroyWindow, not win.destroy(): this module defines its own `destroy`
-  # for WindowPtr, which a bare `win.destroy()` binds to in preference to
-  # sdl2's - a silent, unbounded self-recursion. The named entry point avoids
-  # the collision.
-  win.destroyWindow()
+  sdl2.destroyWindow(win)
 
 proc pumpEvents*() =
   ## SDL's own event pump is all this platform needs.
