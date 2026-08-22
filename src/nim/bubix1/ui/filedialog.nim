@@ -11,6 +11,8 @@ when defined(macosx):
   from ./macos/filedialog as backend import nil
 elif defined(linux):
   from ./linux/filedialog as backend import nil
+elif defined(windows):
+  from ./windows/filedialog as backend import nil
 else:
   from ./stub/filedialog as backend import nil
 
@@ -24,6 +26,17 @@ const
     ## where the CMT menu would be built). Kept for when the deck is
     ## exposed again.
   BlankDiskExtensions* = "d88"
+
+proc earlyInit*() =
+  ## Called once, before anything else in bubix1turboz.nim's main() - even
+  ## sdl2.init(). Only Windows has anything to do here: TaskDialogIndirect
+  ## needs COM initialized apartment-threaded on the calling thread, and
+  ## that has to win the race against whatever apartment mode SDL2's own
+  ## init might otherwise put the thread into first (confirmed empirically:
+  ## calling this lazily, on first dialog use as every other backend's
+  ## setup does, left the missing-ROM dialog silently failing to appear
+  ## some of the time).
+  backend.earlyInit()
 
 proc setParentWindow*(window: pointer) =
   ## Tells the backend which window the dialogs belong to, as the

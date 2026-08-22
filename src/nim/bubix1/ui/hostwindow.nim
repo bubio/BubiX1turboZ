@@ -12,6 +12,8 @@ import sdl2
 
 when defined(linux):
   from ./linux/hostwindow as backend import nil
+elif defined(windows):
+  from ./windows/hostwindow as backend import nil
 else:
   from ./stub/hostwindow as backend import nil
 

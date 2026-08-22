@@ -14,6 +14,45 @@ import std/os
 
 const appName = "BubiX1turboZ"
 
+# KNOWNFOLDERID GUIDs for userMediaDir below (FOLDERID_Music,
+# FOLDERID_Pictures), byte-swapped from their canonical string form into a
+# GUID struct's little-endian Data1/Data2/Data3 layout. Declared
+# unconditionally (they are inert data on every other platform) so the one
+# Windows-only call site does not need its own `when`.
+const
+  FolderIdMusic: array[16, uint8] = [
+    0x71'u8, 0xd5'u8, 0xd8'u8, 0x4b'u8, 0x19'u8, 0x6d'u8, 0xd3'u8, 0x48'u8,
+    0xbe'u8, 0x97'u8, 0x42'u8, 0x22'u8, 0x20'u8, 0x08'u8, 0x0e'u8, 0x43'u8]
+  FolderIdPictures: array[16, uint8] = [
+    0x30'u8, 0x81'u8, 0xe2'u8, 0x33'u8, 0x1e'u8, 0x4e'u8, 0x76'u8, 0x46'u8,
+    0x83'u8, 0x5a'u8, 0x98'u8, 0x39'u8, 0x5c'u8, 0x3b'u8, 0xc3'u8, 0xbb'u8]
+
+when defined(windows):
+  import std/widestrs
+
+  proc shGetKnownFolderPath(rfid: pointer, flags: uint32,
+    token: pointer, path: pointer): int32
+    {.importc: "SHGetKnownFolderPath", stdcall, dynlib: "shell32".}
+    ## `rfid`/`path` are untyped pointers rather than the real KNOWNFOLDERID*
+    ## / PWSTR* so that MinGW's stricter -Wincompatible-pointer-types (an
+    ## error there, not a warning) does not reject the array[16, uint8] /
+    ## WideCString this app passes them as - a real REFKNOWNFOLDERID has no
+    ## Nim-side equivalent worth declaring for the one call site below.
+    ## `dynlib` alone, no `header`: matches ui/windows/hostlang.nim's own
+    ## Win32 call, and sidesteps needing windows.h included first.
+  proc coTaskMemFree(p: pointer)
+    {.importc: "CoTaskMemFree", stdcall, dynlib: "ole32".}
+
+  proc knownFolder(guid: array[16, uint8]): string =
+    ## "" if the call fails - a profile without the folder redirected
+    ## anywhere unusual should not, but userMediaDir below falls back to a
+    ## fixed path rather than trust that absolutely.
+    var wpath: WideCString
+    if shGetKnownFolderPath(unsafeAddr guid, 0, nil, addr wpath) == 0 and
+        wpath != nil:
+      result = $wpath
+      coTaskMemFree(cast[pointer](wpath))
+
 proc appDataDir*(): string =
   ## The single base directory. One directory rather than the config/data
   ## split XDG would suggest, because 7z and zip archives are expanded
@@ -34,16 +73,19 @@ proc appDataDir*(): string =
     if xdg.len > 0: xdg / appName
     else: getHomeDir() / ".local" / "share" / appName
 
-proc userMediaDir(xdgName, xdgFallback, macFolder: string): string =
+proc userMediaDir(xdgName, xdgFallback, macFolder: string,
+                  winGuid: array[16, uint8]): string =
   ## A folder of the user's own, below which this app makes one of its
   ## own: `~/Music/BubiX1turboZ` and the equivalents elsewhere.
   when defined(macosx):
     getHomeDir() / macFolder / appName
   elif defined(windows):
-    # The correct call is SHGetKnownFolderPath(FOLDERID_Music /
-    # FOLDERID_Pictures); this is where those resolve to on a default
-    # profile, and stands in until Windows is actually built.
-    getHomeDir() / macFolder / appName
+    # SHGetKnownFolderPath, not a fixed "%USERPROFILE%\Music": either
+    # folder can be redirected elsewhere (a different drive, a synced
+    # location), and the display name is localized on a non-English
+    # Windows besides.
+    let known = knownFolder(winGuid)
+    (if known.len > 0: known else: getHomeDir() / macFolder) / appName
   else:
     # XDG_MUSIC_DIR and XDG_PICTURES_DIR are declared in
     # ~/.config/user-dirs.dirs rather than exported, so they are usually
@@ -98,11 +140,11 @@ proc recordingsDir*(): string =
   ## Host > Rec Sound writes here. Not under the app's data directory: a
   ## recording is something the user goes looking for later, so it belongs
   ## in the platform's own audio folder.
-  userMediaDir("XDG_MUSIC_DIR", "Music", "Music")
+  userMediaDir("XDG_MUSIC_DIR", "Music", "Music", FolderIdMusic)
 
 proc screenshotsDir*(): string =
   ## Host > Capture Screen writes here, for the same reason.
-  userMediaDir("XDG_PICTURES_DIR", "Pictures", "Pictures")
+  userMediaDir("XDG_PICTURES_DIR", "Pictures", "Pictures", FolderIdPictures)
 
 proc ensureDirsExist*() =
   ## Call once at startup, before bx1_create / load_config.

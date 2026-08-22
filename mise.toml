@@ -8,6 +8,13 @@
 # registry. Install it once with:
 #
 #   mise plugins install nim https://github.com/asdf-community/asdf-nim
+#
+# Windows is the one exception: that plugin is bash scripts, which mise's
+# Windows backend cannot execute (confirmed - it tries to run bin/list-all
+# directly and fails with "not a valid Win32 application"). The version
+# below is still the single source of truth there too -
+# scripts/install_nim_windows.sh reads it and fetches the matching official
+# Windows zip instead of going through mise/asdf-nim at all.
 
 [tools]
 nim = "2.2.10"

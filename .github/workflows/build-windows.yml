@@ -1,0 +1,98 @@
+name: Build Windows (x86_64)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'assets/**'
+      - '*.nimble'
+      - 'mise.toml'
+      - 'scripts/**'
+      - '.github/workflows/build-windows.yml'
+      - '.github/workflows/publish-release-assets.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'assets/**'
+      - '*.nimble'
+      - 'mise.toml'
+      - 'scripts/**'
+      - '.github/workflows/build-windows.yml'
+      - '.github/workflows/publish-release-assets.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # x86_64 only - see scripts/build_windows.sh's own comment for why
+    # arm64 is not built here yet.
+    runs-on: windows-2022
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - uses: actions/checkout@v4
+
+    # mise cannot install nim on Windows (the community asdf-nim plugin is
+    # bash scripts mise's Windows backend cannot execute - confirmed:
+    # "%1 is not a valid Win32 application" trying to run its bin/list-all
+    # directly). Windows gets its whole toolchain - Nim, MinGW-w64 GCC,
+    # SDL2, zlib - from this project's own pinned fetch scripts instead;
+    # see install_nim_windows.sh's comment for the full story. Caching
+    # keyed on those scripts' own content means a change to a pinned
+    # version invalidates the cache, same idea as macOS's SDL2 framework
+    # cache.
+    - name: Cache Windows toolchain
+      uses: actions/cache@v4
+      with:
+        path: build/toolchain
+        key: windows-toolchain-${{ hashFiles('scripts/install_nim_windows.sh', 'scripts/fetch_mingw_windows.sh', 'scripts/fetch_sdl2_windows.sh', 'scripts/fetch_zlib_windows.sh', 'mise.toml') }}
+
+    - name: Fetch Nim, MinGW-w64, SDL2 and zlib
+      run: |
+        ./scripts/install_nim_windows.sh
+        ./scripts/fetch_mingw_windows.sh
+        ./scripts/fetch_sdl2_windows.sh
+        ./scripts/fetch_zlib_windows.sh
+
+    # -d: dependencies only, read from bubix1turboz.nimble, which pins them
+    # to the versions this app is verified against. Uses the fetched nim's
+    # own nimble, not mise's - see the comment above.
+    - name: Install Nim dependencies
+      run: |
+        . build/toolchain/nim-windows/env.sh
+        . build/toolchain/mingw-windows/env.sh
+        export PATH="$MINGW_BIN_DIR:$PATH"
+        "$NIM_BIN_DIR/nimble.exe" install -d -y
+
+    - name: Build portable zip
+      run: ./scripts/build_windows.sh
+
+    - name: Upload zip artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: bubix1turboz-windows-x86_64-zip
+        path: build/bubix1turboz-*-windows-x86_64.zip
+        if-no-files-found: error
+
+  publish-release:
+    if: github.event_name == 'release'
+    needs: build
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-release-assets.yml
+    with:
+      asset-patterns: |
+        *.zip

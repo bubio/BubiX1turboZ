@@ -5,6 +5,8 @@ when defined(macosx):
   from ./macos/clipboard as backend import nil
 elif defined(linux):
   from ./linux/clipboard as backend import nil
+elif defined(windows):
+  from ./windows/clipboard as backend import nil
 else:
   from ./stub/clipboard as backend import nil
 

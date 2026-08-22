@@ -1,0 +1,64 @@
+diff --git a/src/core/common.cpp b/src/core/common.cpp
+index cbdd3a7..8d5620e 100644
+--- a/src/core/common.cpp
++++ b/src/core/common.cpp
+@@ -27,6 +27,13 @@
+ #elif defined(_WIN32)
+ 	#include <shlwapi.h>
+ 	#pragma comment(lib, "shlwapi.lib")
++	// BubiX1turboZ: upstream's _WIN32 target is MSVC only (to_upper below is
++	// #ifndef _MSC_VER, so MSVC never compiles it), and MSVC's own <cctype>
++	// is pulled in some other way that leaves this branch not needing it.
++	// A MinGW GCC build of the SDL OSD on Windows is _WIN32 without being
++	// _MSC_VER, and does compile to_upper, so std::toupper needs its header
++	// named explicitly here.
++	#include <cctype>
+ #else
+ 	#include <time.h>
+ 	#include <unistd.h>
+@@ -1053,7 +1060,9 @@ static void _my_mkdir(std::string t_dir)
+ }
+ #endif
+ 
+-#if !defined(_WIN32) && !defined(_USE_QT)
++// BubiX1turboZ: kept in step with the declaration's guard in common.h -
++// see its comment for why _USE_SDL joins the non-_WIN32 side here too.
++#if !defined(_USE_QT) && (!defined(_WIN32) || defined(_USE_SDL))
+ static _TCHAR host_application_path[_MAX_PATH] = {0};
+ 
+ void DLL_PREFIX set_application_path(const _TCHAR *path)
+@@ -1072,9 +1081,14 @@ const _TCHAR *DLL_PREFIX get_application_path()
+ {
+ 	static _TCHAR app_path[_MAX_PATH];
+ 	static bool initialized = false;
+-	
++
+ 	if(!initialized) {
+-#if defined(_WIN32) && !defined(_USE_QT)
++	// BubiX1turboZ: excludes _USE_SDL, so a Windows build of the SDL OSD
++	// falls through to the host-supplied path below (BluePrint: ROMs and
++	// settings must not sit next to the executable) instead of this
++	// branch's GetModuleFileName-derived one, which is what the native
++	// win32 OSD alone actually wants.
++#if defined(_WIN32) && !defined(_USE_QT) && !defined(_USE_SDL)
+ 		_TCHAR tmp_path[_MAX_PATH], *ptr = NULL;
+ 		if(GetModuleFileName(NULL, tmp_path, _MAX_PATH) != 0 && GetFullPathName(tmp_path, _MAX_PATH, app_path, &ptr) != 0 && ptr != NULL) {
+ 			*ptr = _T('\0');
+diff --git a/src/core/common.h b/src/core/common.h
+index 82b4c28..31c638b 100644
+--- a/src/core/common.h
++++ b/src/core/common.h
+@@ -1054,7 +1054,12 @@ typedef struct {
+ #pragma pack()
+ 
+ // file path
+-#if !defined(_WIN32) && !defined(_USE_QT)
++// BubiX1turboZ: also declared for a Windows build of the SDL OSD
++// (_USE_SDL), not only !_WIN32 - see the matching guard in common.cpp for
++// why. Upstream's own #if only ever needed to distinguish "native win32
++// OSD" from everything else, which _WIN32 alone was enough to do until
++// this project started building the SDL OSD directly on Windows too.
++#if !defined(_USE_QT) && (!defined(_WIN32) || defined(_USE_SDL))
+ void DLL_PREFIX set_application_path(const _TCHAR *path);
+ #endif
+ const _TCHAR *DLL_PREFIX get_application_path();

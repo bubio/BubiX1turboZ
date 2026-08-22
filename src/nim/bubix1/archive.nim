@@ -54,7 +54,11 @@ proc bsdtarPath(): string =
   ## `bsdtar` on the PATH wins (Linux's libarchive-tools puts it there).
   ## `/usr/bin/tar` is accepted only when it says it is bsdtar, which it
   ## is on macOS and is not on a typical Linux, where it is GNU tar and
-  ## can read neither `.7z` nor `.zip`.
+  ## can read neither `.7z` nor `.zip`. Windows' own `%SystemRoot%\
+  ## System32\tar.exe` (present since Windows 10 1803) needs no such check:
+  ## Microsoft's build is always libarchive's bsdtar, never GNU tar - see
+  ## bubix1/ui/README.md for why this file, not only paths.nim/deflate.nim,
+  ## is allowed to name the platform here.
   if cachedBsdtar.len == 0:
     cachedBsdtar = "-"
     let bsd = findExe("bsdtar")
@@ -67,6 +71,10 @@ proc bsdtarPath(): string =
           cachedBsdtar = "/usr/bin/tar"
       except CatchableError:
         discard
+    elif defined(windows):
+      let winTar = getEnv("SystemRoot", "C:\\Windows") / "System32" / "tar.exe"
+      if fileExists(winTar):
+        cachedBsdtar = winTar
   if cachedBsdtar == "-": "" else: cachedBsdtar
 
 proc sevenZipPath(): string =

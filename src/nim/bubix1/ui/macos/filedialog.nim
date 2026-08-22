@@ -9,6 +9,9 @@
 {.compile: "filedialog.m".}
 {.passL: "-framework Cocoa".}
 
+proc earlyInit*() =
+  discard
+
 proc bx1DialogSetParent(window: pointer)
   {.importc: "bx1_dialog_set_parent", cdecl.}
 proc bx1DialogOpenFile(extensions, startDir: cstring): cstring

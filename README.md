@@ -16,6 +16,9 @@ BubiX1turboZ は、[Common Source Code Project](https://takeda-toshiya.my.coocan
   <a href="https://github.com/bubio/BubiX1turboZ/actions/workflows/build-linux.yml">
     <img src="https://github.com/bubio/BubiX1turboZ/actions/workflows/build-linux.yml/badge.svg" alt="Linux">
   </a>
+  <a href="https://github.com/bubio/BubiX1turboZ/actions/workflows/build-windows.yml">
+    <img src="https://github.com/bubio/BubiX1turboZ/actions/workflows/build-windows.yml/badge.svg" alt="Windows">
+  </a>
   <a href="https://github.com/bubio/BubiX1turboZ/actions/workflows/check-portability.yml">
     <img src="https://github.com/bubio/BubiX1turboZ/actions/workflows/check-portability.yml/badge.svg" alt="Portability">
   </a>
@@ -28,7 +31,7 @@ BubiX1turboZ は、[Common Source Code Project](https://takeda-toshiya.my.coocan
 - **C++ コア + Nim アプリケーション層の二層構成**
   eX1turboZ のコアはそのまま使い、OS 依存の処理はすべて上位層で吸収しています。
 - **GUI はプラットフォームのネイティブ API**
-  メニューバー・ダイアログ・設定パネルは、macOS では AppKit、Linux では GTK3 を直接使います。クロスプラットフォームの GUI ツールキットは使いません。Linux ではグローバルメニューバーが無いため、メニューバーをウィンドウ上部に組み込み、SDL の描画面をその下に埋め込みます。
+  メニューバー・ダイアログ・設定パネルは、macOS では AppKit、Linux では GTK3、Windows では Win32 API を直接使います。クロスプラットフォームの GUI ツールキットは使いません。Linux・Windows にはグローバルメニューバーが無いため、どちらもメニューバーをウィンドウ上部に組み込み、SDL の描画面をその下に埋め込みます（Windows は `SetMenu` でアプリのウィンドウに直接付けるだけで済み、Linux の X11 再親化ほどの仕掛けは要りません）。
 - **メディア操作が速い**
   `D88` などのディスクイメージを、メニュー・ドラッグ&ドロップのどちらからでも読み込めます。ドロップした場合は自動でリセットして起動します。
 - **アーカイブをそのまま開ける**
@@ -72,7 +75,13 @@ BubiX1turboZ は、[Common Source Code Project](https://takeda-toshiya.my.coocan
 - `7z` / `zip` の展開には外部のアーカイバーを使います。bsdtar（`libarchive-tools`）が第一候補で、無ければ 7-Zip（`p7zip-full` の `7z` / `7za`、または `7zz`）、`zip` だけは `unzip` でも展開できます。`.deb` は `libarchive-tools | p7zip-full` を依存関係として要求し、`.rpm` は `bsdtar` を推奨（Recommends）します。AppImage で使う場合はどちらかをシステムに入れてください（生のディスクイメージには不要です）。いずれも無い状態でアーカイブを開くと、何を入れればよいかを伝えるダイアログが出ます。
 - X11 セッション（メニューバー埋め込みは X11 のウィンドウ再ペアレントを使います）
 
-Windows 11 (x86_64) は移植先として設計に織り込んであり、CI でも `nim check` によるコンパイル検査を行っていますが、**現時点でバイナリを提供しているのは macOS (Apple シリコン) と Linux (amd64・arm64) です**。Intel Mac 向けとユニバーサルバイナリ、Windows 版も今後の対応です。
+### Windows
+
+- Windows 11 以降 / x86_64
+- 追加のランタイムは不要です。SDL2 と MinGW-w64 のランタイム DLL（`libgcc`・`libstdc++`・`libwinpthread`）は配布物に同梱されています。
+- `7z` / `zip` の展開には Windows 10 (1803) 以降に標準搭載の `tar.exe`（libarchive 版、常に bsdtar）を使います。見つからない場合は Linux 同様 7-Zip 系（`7zz` / `7z` / `7za`）を探します。
+
+arm64 版は未提供です（クラシックな MinGW-w64 は Windows/arm64 向けのビルドに向いておらず、別ツールチェーン（llvm-mingw）が要るため今後の対応とします）。Intel Mac 向けとユニバーサルバイナリも今後の対応です。
 
 ## Install
 
@@ -98,6 +107,10 @@ Windows 11 (x86_64) は移植先として設計に織り込んであり、CI で
   sudo dnf install ./bubix1turboz-*-linux-*.rpm   # openSUSE なら sudo zypper install
   ```
 
+### Windows
+
+[Releases](https://github.com/bubio/BubiX1turboZ/releases) から zip をダウンロードし、好きなフォルダに展開して `BubiX1turboZ.exe` を実行してください。インストーラはありません（AppImage と同じく、展開してそのまま動く形です）。
+
 ### CI 生成物一覧
 
 | OS | CI Artifact 名 | Release Asset 名 |
@@ -105,6 +118,7 @@ Windows 11 (x86_64) は移植先として設計に織り込んであり、CI で
 | macOS (arm64) | `bubix1turboz-macos-arm64.zip` | `bubix1turboz-{version}-macos-arm64.dmg` |
 | Linux (amd64) | `bubix1turboz-linux-amd64-appimage` / `-deb` / `-rpm` | `bubix1turboz-{version}-linux-amd64.AppImage` / `.deb` / `.rpm` |
 | Linux (arm64) | `bubix1turboz-linux-arm64-appimage` / `-deb` / `-rpm` | `bubix1turboz-{version}-linux-arm64.AppImage` / `.deb` / `.rpm` |
+| Windows (x86_64) | `bubix1turboz-windows-x86_64-zip` | `bubix1turboz-{version}-windows-x86_64.zip` |
 
 > **macOS での注意**: このアプリは Apple Developer ID による署名・公証（notarization）を受けていないため、初回起動時に Gatekeeper によってブロックされます。以下のいずれかの方法で回避できます：
 >
@@ -119,6 +133,8 @@ Windows 11 (x86_64) は移植先として設計に織り込んであり、CI で
 > 3. 「"BubiX1turboZ"は開発元を確認できないため、使用がブロックされました」の横にある「このまま開く」をクリック
 >
 > いずれも初回のみの操作です。
+
+> **Windows での注意**: このアプリはコード署名を受けていないため、初回起動時に Windows SmartScreen が警告を出すことがあります。「詳細情報」→「実行」の順にクリックすると起動できます。初回のみの操作です。
 
 ## 使い始める前に
 
@@ -137,7 +153,7 @@ Windows 11 (x86_64) は移植先として設計に織り込んであり、CI で
 - `FNT0816.X1`
 - `FNT1616.X1`
 
-ROM が入っていない状態で起動すると、置き場所を知らせるダイアログが表示されます。「ROM フォルダを開く」を押すとそのフォルダが Finder で開きます。
+ROM が入っていない状態で起動すると、置き場所を知らせるダイアログが表示されます。「ROM フォルダを開く」を押すとそのフォルダがファイルマネージャー（macOS は Finder、Windows は エクスプローラー、Linux はデスクトップ環境既定のもの）で開きます。
 
 設定ファイルとステートセーブも同じフォルダ以下に保存されます。
 
@@ -150,7 +166,7 @@ ROM が入っていない状態で起動すると、置き場所を知らせる�
 - `Host -> Screen` でウィンドウ倍率・アスペクト比・フルスクリーンの表示方法を切り替えられます。
 - `Host -> Volume` で各音源のバランスを調整できます。
 
-よく使うショートカット（macOS の `Cmd` は Linux では `Ctrl`）:
+よく使うショートカット（macOS の `Cmd` は Linux / Windows では `Ctrl`）:
 
 - `Cmd+R` / `Ctrl+R`: リセット
 - `Cmd+V` / `Ctrl+V`: テキストの貼り付け（オートキー）
@@ -158,16 +174,26 @@ ROM が入っていない状態で起動すると、置き場所を知らせる�
 - `Cmd+3` / `Ctrl+3`: FD0 & FD1 にまとめて挿入
 - `Cmd+Ctrl+F`: フルスクリーン切り替え
 
-> **Linux でのメニュー操作について**: ゲーム画面にキーボードフォーカスがある間は、押したキーはゲスト（エミュレーター）へ送られるため、メニューのキーボードショートカットは発火しないことがあります。メニューはクリックで操作するのが確実です（ショートカット表示は目安です）。
+> **Linux / Windows でのメニュー操作について**: ゲーム画面にキーボードフォーカスがある間は、押したキーはゲスト（エミュレーター）へ送られるため、メニューのキーボードショートカットは発火しないことがあります。メニューはクリックで操作するのが確実です（ショートカット表示は目安です）。
 
 ## ソースからビルドする
 
-いずれのプラットフォームでも [mise](https://mise.jdx.dev/) で Nim ツールチェーン（バージョンは `mise.toml` で固定）を用意します。
+macOS と Linux では [mise](https://mise.jdx.dev/) で Nim ツールチェーン（バージョンは `mise.toml` で固定）を用意します。
 
 ```sh
 mise plugins install nim https://github.com/asdf-community/asdf-nim
 mise install
 mise exec -- nimble install -d -y
+```
+
+Windows は別扱いです。`nim` を提供する asdf-nim プラグインは bash スクリプトで、mise の Windows バックエンドでは実行できません（`bin/list-all` を直接実行しようとして「有効な Win32 アプリケーションではありません」で失敗することを確認済みです）。代わりに `scripts/install_nim_windows.sh` が `mise.toml` に固定されたバージョンの Nim 公式 Windows zip を、`scripts/fetch_mingw_windows.sh` が MinGW-w64 GCC を、それぞれ取得します（後述のビルドスクリプトが未取得なら自動的に呼び出します）。依存パッケージのインストールだけは Windows でも明示的に行います。
+
+```sh
+./scripts/install_nim_windows.sh
+./scripts/fetch_mingw_windows.sh
+. build/toolchain/nim-windows/env.sh
+. build/toolchain/mingw-windows/env.sh
+PATH="$MINGW_BIN_DIR:$PATH" "$NIM_BIN_DIR/nimble.exe" install -d -y
 ```
 
 ### macOS
@@ -212,11 +238,32 @@ sudo apt install imagemagick rpm
 ./build/BubiX1turboZ
 ```
 
+### Windows
+
+- Windows 11 以降 / [Git for Windows](https://gitforwindows.org/)（このプロジェクトのスクリプトはすべて bash で書かれています）
+- SDL2・MinGW-w64 GCC・zlib はいずれもビルドスクリプトが自動取得します（`scripts/fetch_sdl2_windows.sh` / `fetch_mingw_windows.sh` / `fetch_zlib_windows.sh`）。追加のパッケージインストールは不要です。
+
+```sh
+# ポータブル zip（インストーラなし、展開してそのまま動く形）
+./scripts/build_windows.sh
+```
+
+`build/bubix1turboz-<version>-windows-x86_64.zip` が生成されます。x86_64 のみです（クラシックな MinGW-w64 は Windows/arm64 に向いていないため、arm64 は今後の対応です）。
+
+アプリ本体だけを繰り返しビルドする場合:
+
+```sh
+./scripts/build_core.sh all
+./scripts/build_app_windows_dev.sh
+./build/BubiX1turboZ.exe
+```
+
 ## 現在の注意点
 
 - ROM イメージは同梱していません。
-- 提供しているビルドは macOS (Apple シリコン) 版と Linux (amd64・arm64) 版です。Windows 版は未提供です。
+- 提供しているビルドは macOS (Apple シリコン) 版、Linux (amd64・arm64) 版、Windows (x86_64) 版です。Windows の arm64 版は未提供です。
 - Linux では X11 セッションを前提としています（Wayland では XWayland 経由で動作します）。
+- Windows のコード署名は行っていません（README の「Windows での注意」参照）。
 - CMT（テープ）には対応していません。UI からの到達経路を塞いでいます。
 - 市販ゲームの実行に不要な機能は意図的に実装していません（FDD は 2 基、HDD 非対応など）。
 - 実ゲームによる動作検証と、ユーザー向け操作マニュアル（`docs/UserManual.md`）は作業中です。
@@ -225,7 +272,7 @@ sudo apt install imagemagick rpm
 ## クレジット
 
 - Original eX1turboZ by Takeda, Toshiya ([Common Source Code Project](https://takeda-toshiya.my.coocan.jp/common/index.html))
-- macOS / Linux Nim + SDL2 port maintained by bubio
+- macOS / Linux / Windows Nim + SDL2 port maintained by bubio
 
 ## ライセンス
 
@@ -240,7 +287,8 @@ sudo apt install imagemagick rpm
 | [eX1turboZ (Common Source Code Project)](https://takeda-toshiya.my.coocan.jp/common/index.html) | GPL-2.0-or-later | エミュレーションコア |
 | [SDL2](https://github.com/libsdl-org/SDL) | zlib License | ウィンドウ、入力、オーディオ、レンダリング |
 | [GTK3](https://www.gtk.org/) | LGPL-2.1-or-later | Linux のメニューバー・ダイアログ・設定パネル |
-| zlib | zlib License | ステートセーブの圧縮と PNG 出力（OS 同梱の libz を使用） |
-| bsdtar (libarchive) / 7-Zip / unzip | 3-clause BSD License ほか | `7z` / `zip` の展開（macOS は `/usr/bin/tar`、Linux は `libarchive-tools` の `bsdtar`、無ければ `7z` 系または `unzip`） |
+| zlib | zlib License | ステートセーブの圧縮と PNG 出力（macOS/Linux は OS 同梱の libz、Windows はビルド時に取得したソースをコアの静的ライブラリに組み込み） |
+| bsdtar (libarchive) / 7-Zip / unzip | 3-clause BSD License ほか | `7z` / `zip` の展開（macOS は `/usr/bin/tar`、Linux は `libarchive-tools` の `bsdtar`、Windows は標準搭載の `tar.exe`、無ければいずれも `7z` 系または `unzip`） |
+| [MinGW-w64](https://www.mingw-w64.org/) | zlib License ほか | Windows 版のビルドに使う GCC ツールチェーン（`libgcc`・`libstdc++`・`libwinpthread` のランタイム DLL を同梱） |
 
-macOS では `SDL2.framework` をビルド時に公式配布物として取得し `.app` に同梱します。Linux では AppImage が SDL2 を同梱し、GTK3 はシステムのものを使います。zlib と展開用のアーカイバーは OS が提供するものをそのまま利用しており、再配布は行っていません。
+macOS では `SDL2.framework` をビルド時に公式配布物として取得し `.app` に同梱します。Linux では AppImage が SDL2 を同梱し、GTK3 はシステムのものを使います。Windows では SDL2 の MinGW-w64 開発パッケージをビルド時に取得し、`SDL2.dll` を配布物に同梱します。zlib と展開用のアーカイバーは、macOS/Linux は OS が提供するものをそのまま利用し（再配布なし）、Windows は zlib のソースをビルド時に取得してコアへ静的リンクします（動的ライブラリとしての再配布はなし）。

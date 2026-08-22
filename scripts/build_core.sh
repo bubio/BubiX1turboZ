@@ -23,26 +23,54 @@ OBJ=build/core-obj
 LOG=build/core-compile.log
 LIB=build/libbubix1core.a
 
-if [ "$(uname -s)" = "Darwin" ]; then
-  # Matches LSMinimumSystemVersion in the .app's Info.plist. Without it clang
-  # stamps the objects with the SDK's own (current) minimum, which would make
-  # the released app refuse to launch on every macOS older than the machine
-  # that built it.
-  export MACOSX_DEPLOYMENT_TARGET=13.5
-  CXX=clang++
-  ARCHFLAGS=(-arch arm64)
-  # Clang's spelling of "string literal assigned to char*", and a warning
-  # only Clang knows for the Shift-JIS bytes in some comments.
-  PLATFORM_WARNINGS=(-Wno-writable-strings -Wno-invalid-source-encoding)
-else
-  # Linux (and any other Unix): the native g++, no architecture flag, and
-  # GCC's own spelling of the writable-string warning. GCC accepts the
-  # Shift-JIS comment bytes without a flag, so -Wno-invalid-source-encoding
-  # (a Clang-only option) is omitted rather than passed and ignored.
-  CXX="${CXX:-g++}"
-  ARCHFLAGS=()
-  PLATFORM_WARNINGS=(-Wno-write-strings)
-fi
+ZLIB_SRCS=()
+case "$(uname -s)" in
+  Darwin)
+    # Matches LSMinimumSystemVersion in the .app's Info.plist. Without it
+    # clang stamps the objects with the SDK's own (current) minimum, which
+    # would make the released app refuse to launch on every macOS older
+    # than the machine that built it.
+    export MACOSX_DEPLOYMENT_TARGET=13.5
+    CXX=clang++
+    ARCHFLAGS=(-arch arm64)
+    # Clang's spelling of "string literal assigned to char*", and a warning
+    # only Clang knows for the Shift-JIS bytes in some comments.
+    PLATFORM_WARNINGS=(-Wno-writable-strings -Wno-invalid-source-encoding)
+    ;;
+  MINGW*|MSYS*)
+    # Windows, via the MinGW-w64 GCC scripts/fetch_mingw_windows.sh pins -
+    # not the system g++ (there is not normally one), and not one found on
+    # PATH, so the same compiler is used whether this runs on a developer's
+    # machine or a CI runner that happens to carry an unrelated GCC.
+    if [ ! -f build/toolchain/mingw-windows/env.sh ]; then
+      ./scripts/fetch_mingw_windows.sh
+    fi
+    . build/toolchain/mingw-windows/env.sh
+    CXX="$MINGW_BIN_DIR/g++.exe"
+    CC="$MINGW_BIN_DIR/gcc.exe"
+    AR="$MINGW_BIN_DIR/ar.exe"
+    ARCHFLAGS=()
+    PLATFORM_WARNINGS=(-Wno-write-strings)
+    # Windows has no system zlib (see bubix1/deflate.nim's own comment);
+    # its objects are compiled into libbubix1core.a here instead, so the
+    # Nim side never needs a system -lz on this platform.
+    if [ ! -f build/toolchain/zlib-windows/.zlib-version ]; then
+      ./scripts/fetch_zlib_windows.sh
+    fi
+    ZLIB_SRCS=(adler32.c compress.c crc32.c deflate.c gzclose.c gzlib.c
+      gzread.c gzwrite.c infback.c inffast.c inflate.c inftrees.c trees.c
+      uncompr.c zutil.c)
+    ;;
+  *)
+    # Linux (and any other Unix): the native g++, no architecture flag, and
+    # GCC's own spelling of the writable-string warning. GCC accepts the
+    # Shift-JIS comment bytes without a flag, so -Wno-invalid-source-encoding
+    # (a Clang-only option) is omitted rather than passed and ignored.
+    CXX="${CXX:-g++}"
+    ARCHFLAGS=()
+    PLATFORM_WARNINGS=(-Wno-write-strings)
+    ;;
+esac
 
 CXXFLAGS=(
   -std=c++17 "${ARCHFLAGS[@]}" -c
@@ -118,6 +146,23 @@ if [ "${1:-all}" = "bridge" ] || [ "${1:-all}" = "all" ]; then
   done
 fi
 
+if [ "${1:-all}" = "all" ] && [ ${#ZLIB_SRCS[@]} -gt 0 ]; then
+  # Plain C, compiled with the matching gcc rather than g++: zlib is C, and
+  # not every construct it uses is accepted under g++'s stricter C++ rules.
+  ZLIB_SRC=build/toolchain/zlib-windows
+  ZLIB_CFLAGS=(-c -I"$ZLIB_SRC")
+  for s in "${ZLIB_SRCS[@]}"; do
+    o="$OBJ/zlib_${s//\//_}.o"
+    if "$CC" "${ZLIB_CFLAGS[@]}" "$ZLIB_SRC/$s" -o "$o" >>"$LOG" 2>&1; then
+      printf 'ok   zlib/%s\n' "$s"
+      pass=$((pass+1))
+    else
+      printf 'FAIL zlib/%s\n' "$s"
+      fail=$((fail+1)); failed+=("zlib/$s")
+    fi
+  done
+fi
+
 echo "----"
 echo "pass=$pass fail=$fail  objects=$(ls "$OBJ" | wc -l | tr -d ' ')"
 if [ $fail -gt 0 ]; then
@@ -128,7 +173,7 @@ fi
 
 if [ "${1:-all}" = "all" ]; then
   rm -f "$LIB"
-  ar rcs "$LIB" "$OBJ"/*.o
+  "${AR:-ar}" rcs "$LIB" "$OBJ"/*.o
   echo "archived $LIB"
 
   # Real link test (against an empty main) is the actual completion

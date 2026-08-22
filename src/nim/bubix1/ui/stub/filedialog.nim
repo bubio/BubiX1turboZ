@@ -4,6 +4,9 @@
 ## the standard error stream, so the application runs to completion
 ## instead of blocking on UI that is not there.
 
+proc earlyInit*() =
+  discard
+
 proc setParentWindow*(window: pointer) =
   ## Nothing here has a window to hang a dialog from.
   discard

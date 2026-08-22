@@ -3,8 +3,9 @@
 #
 # Shared by the dev and release build scripts of each platform so the
 # released build and the one iterated on locally cannot drift apart:
-#   macOS  build_app_macos_dev.sh / build_macos.sh   (SDL2.framework)
-#   Linux  build_app_linux_dev.sh / build_linux.sh   (system libSDL2)
+#   macOS    build_app_macos_dev.sh / build_macos.sh     (SDL2.framework)
+#   Linux    build_app_linux_dev.sh / build_linux.sh     (system libSDL2)
+#   Windows  build_app_windows_dev.sh / build_windows.sh (fetched SDL2 mingw devel)
 # They differ only in where the executable goes and where it looks for SDL2
 # at run time.
 #
@@ -39,32 +40,104 @@ APP_VERSION="$(grep '^version' ./*.nimble | sed -E 's/.*"(.*)".*/\1/')"
 # Resolving its symbols at link time instead lets a single -framework SDL2
 # (macOS) / -lSDL2 (Linux) be the whole story, so the run-time search path
 # below is the only thing that decides where SDL2 is found.
-if [ "$(uname -s)" = "Darwin" ]; then
-  FRAMEWORKS="$(pwd)/build/frameworks"
-  if [ ! -d "$FRAMEWORKS/SDL2.framework" ]; then
-    echo "error: $FRAMEWORKS/SDL2.framework not found -" \
-         "run ./scripts/fetch_sdl2_framework.sh first" >&2
-    exit 1
-  fi
-  # Matches LSMinimumSystemVersion in the .app's Info.plist and the support
-  # window stated in README.md. clang reads this from the environment, which
-  # covers both the C the Nim compiler emits and the link step.
-  export MACOSX_DEPLOYMENT_TARGET=13.5
-  PASSC="-F$FRAMEWORKS -I$FRAMEWORKS/SDL2.framework/Headers -Isrc/bridge"
-  PASSL="-F$FRAMEWORKS -framework SDL2 -Wl,-rpath,$RPATH $(pwd)/$LIB -lc++"
-else
-  # Linux: SDL2 from the system (pkg-config), the C++ core and its standard
-  # library resolved at link time. The GTK backends under bubix1/ui/linux
-  # carry their own pkg-config flags, so nothing GTK is named here. -ldl and
-  # -lpthread cover the core's OSD threads and the sdl2 binding's dlopen.
-  # The rpath is single-quoted: Nim runs the link command through a shell,
-  # which would otherwise expand $ORIGIN to nothing and leave the AppImage
-  # unable to find its bundled SDL2.
-  PASSC="$(pkg-config --cflags sdl2) -Isrc/bridge"
-  PASSL="$(pwd)/$LIB $(pkg-config --libs sdl2) -Wl,-rpath,'$RPATH' -lstdc++ -lm -ldl -lpthread"
-fi
+NIM_CMD=(mise exec -- nim)
+case "$(uname -s)" in
+  Darwin)
+    FRAMEWORKS="$(pwd)/build/frameworks"
+    if [ ! -d "$FRAMEWORKS/SDL2.framework" ]; then
+      echo "error: $FRAMEWORKS/SDL2.framework not found -" \
+           "run ./scripts/fetch_sdl2_framework.sh first" >&2
+      exit 1
+    fi
+    # Matches LSMinimumSystemVersion in the .app's Info.plist and the
+    # support window stated in README.md. clang reads this from the
+    # environment, which covers both the C the Nim compiler emits and the
+    # link step.
+    export MACOSX_DEPLOYMENT_TARGET=13.5
+    PASSC="-F$FRAMEWORKS -I$FRAMEWORKS/SDL2.framework/Headers -Isrc/bridge"
+    PASSL="-F$FRAMEWORKS -framework SDL2 -Wl,-rpath,$RPATH $(pwd)/$LIB -lc++"
+    ;;
+  MINGW*|MSYS*)
+    # Windows: SDL2 and zlib.h from the fetched packages (no system SDL2,
+    # no system zlib - see fetch_sdl2_windows.sh and deflate.nim); SDL2.dll
+    # and the MinGW runtime DLLs travel beside the executable (see
+    # build_app_windows_dev.sh / build_windows.sh, which copy them all).
+    # mise cannot install nim here (see install_nim_windows.sh's own
+    # comment for why), so both nim and the MinGW-w64 gcc it shells out to
+    # come from the two fetched toolchains this project pins instead of
+    # mise or PATH.
+    if [ ! -f build/toolchain/nim-windows/env.sh ]; then
+      ./scripts/install_nim_windows.sh
+    fi
+    if [ ! -f build/toolchain/mingw-windows/env.sh ]; then
+      ./scripts/fetch_mingw_windows.sh
+    fi
+    ./scripts/fetch_sdl2_windows.sh
+    . build/toolchain/nim-windows/env.sh
+    . build/toolchain/mingw-windows/env.sh
+    export PATH="$MINGW_BIN_DIR:$PATH"
+    NIM_CMD=("$NIM_BIN_DIR/nim.exe")
+    # pwd -W, not pwd: nim.exe spawns gcc.exe directly (no MSYS layer to
+    # rewrite a POSIX-style /c/... argument for it), and Git Bash's own
+    # auto-conversion of such arguments embedded in a longer flag like
+    # -I/c/... is unreliable - confirmed empirically (one -I in a flag
+    # string this way survived exec untranslated, the next didn't; MinGW's
+    # gcc then reads /c/... as C:\c\... on the current drive and fails
+    # with "No such file or directory"). The drive-letter form pwd -W
+    # prints has no such ambiguity.
+    WIN_ROOT="$(pwd -W)"
+    SDL2_DIR="$WIN_ROOT/build/toolchain/sdl2-windows/x86_64-w64-mingw32"
+    ZLIB_DIR="$WIN_ROOT/build/toolchain/zlib-windows"
+    # -include windows.h: force-includes it ahead of every other header in
+    # every compiled file, GCC's own mechanism for exactly this problem.
+    # ui/windows/*.nim's {.header.} pragmas for commctrl.h/wingdi.h/gdiplus.h
+    # need windows.h's typedefs (LONG, CALLBACK, ...) already visible, and
+    # relying on Nim to emit its own #include lines in the right order
+    # per-file was not reliable enough to trust (confirmed empirically).
+    PASSC="-include windows.h -I$SDL2_DIR/include -I$SDL2_DIR/include/SDL2 -I$ZLIB_DIR -I$WIN_ROOT/src/bridge"
 
-mise exec -- nim c -d:release --hints:off \
+    # The exe cannot start without this manifest linked in (comctl32 v6 -
+    # see assets/windows/app.manifest's own comment).
+    # fetch_mingw_windows.sh disables GCC's own default-manifest.o (see its
+    # comment) so this is the only one that reaches the link - two
+    # manifests linked together fails outright ("multiple non-default
+    # manifests"), it does not just prefer one.
+    RES_OBJ="$WIN_ROOT/build/app-resource.o"
+    "$MINGW_BIN_DIR/windres.exe" \
+      -I "$WIN_ROOT/assets/windows" \
+      "$WIN_ROOT/assets/windows/app.rc" -O coff -o "$RES_OBJ"
+
+    # RPATH is unused on Windows - the loader finds SDL2.dll beside the exe
+    # (or on PATH) with no linker-level search path to set, unlike an ELF
+    # rpath or a macOS install name. libgcc/libstdc++/libwinpthread ship as
+    # DLLs beside the exe instead (see build_app_windows_dev.sh /
+    # build_windows.sh, which copy them from the fetched MinGW toolchain) -
+    # the same "bundle the runtime instead of the OS providing it" approach
+    # every other platform here already uses for its own pieces (SDL2 on
+    # all three, GTK on Linux).
+    # -mconsole: makes the console/main-based CRT entry point explicit
+    # rather than relying on GCC's default, after that default was seen to
+    # flip to the WinMain-based one for reasons not run down (a build that
+    # linked cleanly, changed in no way related to entry point selection,
+    # then failed with "undefined reference to WinMain" on an unchanged
+    # recompile - see git history/session notes around this line if it
+    # recurs and is worth investigating further).
+    PASSL="-mconsole -Wl,--entry=mainCRTStartup $WIN_ROOT/$LIB $RES_OBJ -L$SDL2_DIR/lib -lSDL2 -lstdc++"
+    ;;
+  *)
+    # Linux: SDL2 from the system (pkg-config), the C++ core and its
+    # standard library resolved at link time. The GTK backends under
+    # bubix1/ui/linux carry their own pkg-config flags, so nothing GTK is
+    # named here. -ldl and -lpthread cover the core's OSD threads and the
+    # sdl2 binding's dlopen. The rpath is single-quoted: Nim runs the link
+    # command through a shell, which would otherwise expand $ORIGIN to
+    # nothing and leave the AppImage unable to find its bundled SDL2.
+    PASSC="$(pkg-config --cflags sdl2) -Isrc/bridge"
+    PASSL="$(pwd)/$LIB $(pkg-config --libs sdl2) -Wl,-rpath,'$RPATH' -lstdc++ -lm -ldl -lpthread"
+    ;;
+esac
+
+"${NIM_CMD[@]}" c -d:release --hints:off \
   --dynlibOverride:SDL2 \
   --passC:"$PASSC" \
   --passL:"$PASSL" \

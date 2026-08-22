@@ -9,12 +9,16 @@
 #
 # It also enforces the rule bubix1/ui/README.md states: outside that
 # directory nothing in src/nim may name a platform or reach for a host
-# library. Two files are excepted, and both are named in that README:
+# library. Three files are excepted, and all are named in that README:
 #
 #   paths.nim    needs no backend, only the right branch
 #   deflate.nim  links zlib with -lz, which is not a platform name but is
 #                a real gap - Windows has no system zlib, so that flag has
 #                to be revisited when Windows is built
+#   archive.nim  one `defined(windows)` to also try Windows' own System32
+#                tar.exe (always bsdtar there) as an archiver, alongside
+#                the same-purpose bsdtar/7z/unzip lookups every platform
+#                already does - no UI, no host library link
 #
 # Usage: ./scripts/check_other_platforms.sh
 
@@ -43,7 +47,8 @@ leaked="$(grep -rnE --include='*.nim' \
   src/nim \
   | grep -v '^src/nim/bubix1/ui/' \
   | grep -v '^src/nim/bubix1/paths\.nim:' \
-  | grep -v '^src/nim/bubix1/deflate\.nim:' || true)"
+  | grep -v '^src/nim/bubix1/deflate\.nim:' \
+  | grep -v '^src/nim/bubix1/archive\.nim:' || true)"
 if [ -n "$leaked" ]; then
   echo "error: host-dependent code outside src/nim/bubix1/ui:" >&2
   echo "$leaked" >&2

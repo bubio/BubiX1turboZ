@@ -1054,7 +1054,12 @@ typedef struct {
 #pragma pack()
 
 // file path
-#if !defined(_WIN32) && !defined(_USE_QT)
+// BubiX1turboZ: also declared for a Windows build of the SDL OSD
+// (_USE_SDL), not only !_WIN32 - see the matching guard in common.cpp for
+// why. Upstream's own #if only ever needed to distinguish "native win32
+// OSD" from everything else, which _WIN32 alone was enough to do until
+// this project started building the SDL OSD directly on Windows too.
+#if !defined(_USE_QT) && (!defined(_WIN32) || defined(_USE_SDL))
 void DLL_PREFIX set_application_path(const _TCHAR *path);
 #endif
 const _TCHAR *DLL_PREFIX get_application_path();

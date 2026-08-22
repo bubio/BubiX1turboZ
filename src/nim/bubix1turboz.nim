@@ -360,6 +360,12 @@ proc reportMissingRom() =
     dir)
 
 proc main() =
+  # Before anything else, including sdl2.init below: on Windows this claims
+  # the thread for COM's apartment-threaded model, which the dialogs need
+  # and which SDL2's own init can otherwise claim differently first if this
+  # runs any later - see ui/filedialog.nim's own comment on earlyInit.
+  filedialog.earlyInit()
+
   paths.ensureDirsExist()
 
   # Host-side preferences the emulation core cannot hold - see hostconfig.nim.

@@ -1,0 +1,21 @@
+diff --git a/src/core/vm/io.h b/src/core/vm/io.h
+index ee0c691..78dce17 100644
+--- a/src/core/vm/io.h
++++ b/src/core/vm/io.h
+@@ -7,8 +7,14 @@
+ 	[ i/o bus ]
+ */
+ 
+-#ifndef _IO_H_
+-#define _IO_H_
++// BubiX1turboZ: renamed from the upstream _IO_H_, which collides with
++// MinGW's own system <io.h> on Windows - common.h includes that (for
++// _access() etc.) ahead of this file in every translation unit, so the
++// generic guard name made this header's body silently skip itself,
++// leaving `class IO` an incomplete type wherever it is used (vm/x1/x1.cpp
++// among others).
++#ifndef _BX1_VM_IO_H_
++#define _BX1_VM_IO_H_
+ 
+ #include "vm.h"
+ #include "../emu.h"

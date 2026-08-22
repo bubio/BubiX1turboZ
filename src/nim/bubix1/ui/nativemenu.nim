@@ -36,8 +36,21 @@ when defined(macosx):
   from ./macos/nativemenu as backend import nil
 elif defined(linux):
   from ./linux/nativemenu as backend import nil
+elif defined(windows):
+  from ./windows/nativemenu as backend import nil
 else:
   from ./stub/nativemenu as backend import nil
+
+const
+  hostOwnsStandardItems = defined(macosx)
+    ## Whether `addStandardItem` actually puts something in the menu on this
+    ## platform. Only AppKit owns Services/Hide/Show All; every other
+    ## backend's `addStandardItem` is a no-op (see e.g.
+    ## windows/nativemenu.nim), so a call site that always brackets a run of
+    ## standard items with separators - the application menu in
+    ## bubix1turboz.nim does, since it is written once for every platform -
+    ## would otherwise leave two empty separators back to back wherever
+    ## those items vanish.
 
 type
   Menu* = object
@@ -72,6 +85,18 @@ var actions: Table[cint, MenuAction]
 var nextTag: cint = 1
 var installed = false
 
+type TailKind = enum tkEmpty, tkSeparator, tkOther
+  ## What the last thing appended to a given menu was, so `addSeparator`
+  ## can drop one that would be redundant (leading, or immediately after
+  ## another separator) instead of asking every call site to know whether
+  ## the item(s) it is bracketing actually rendered on this platform.
+
+var menuTail: Table[pointer, TailKind]
+
+proc markAppended(menu: Menu) =
+  if menu.handle != nil:
+    menuTail[menu.handle] = tkOther
+
 proc dispatch(tag: cint) {.cdecl.} =
   ## The single entry point every menu click arrives through.
   let a = actions.getOrDefault(tag)
@@ -92,7 +117,9 @@ proc installMenuBar*(appName: string): Menu =
   ## application menu at the head of it. Everything else is appended after
   ## that menu, so this has to come first.
   ensureInstalled()
-  Menu(handle: backend.installMenubar(appName.cstring))
+  result = Menu(handle: backend.installMenubar(appName.cstring))
+  if result.handle != nil:
+    menuTail[result.handle] = tkEmpty
 
 proc addStandardItem*(menu: Menu, title: string, which: StandardItem,
                       key = "", mods = ModCommand) =
@@ -101,18 +128,25 @@ proc addStandardItem*(menu: Menu, title: string, which: StandardItem,
   if menu.handle != nil:
     backend.addStandardItem(menu.handle, title.cstring, which.cint,
                             key.cstring, mods.cint)
+    if hostOwnsStandardItems:
+      markAppended(menu)
 
 proc addMenu*(title: string): Menu =
   ## Appends a new top-level menu to the menu bar, after the application
   ## menu `installMenuBar` put there.
   ensureInstalled()
-  Menu(handle: backend.addToplevel(title.cstring))
+  result = Menu(handle: backend.addToplevel(title.cstring))
+  if result.handle != nil:
+    menuTail[result.handle] = tkEmpty
 
 proc addSubmenu*(parent: Menu, title: string): Menu =
   ensureInstalled()
   if parent.handle == nil:
     return Menu(handle: nil)
-  Menu(handle: backend.addSubmenu(parent.handle, title.cstring))
+  markAppended(parent)
+  result = Menu(handle: backend.addSubmenu(parent.handle, title.cstring))
+  if result.handle != nil:
+    menuTail[result.handle] = tkEmpty
 
 proc addItem*(menu: Menu, title: string, action: MenuAction = nil,
               key = "", mods = ModCommand): MenuItemRef {.discardable.} =
@@ -125,6 +159,7 @@ proc addItem*(menu: Menu, title: string, action: MenuAction = nil,
     actions[result.tag] = action
   if menu.handle != nil:
     backend.addItem(menu.handle, title.cstring, result.tag, key.cstring, mods.cint)
+    markAppended(menu)
 
 proc setAction*(item: MenuItemRef, action: MenuAction) =
   ## Replaces (or supplies) an item's action after creation. Needed for a
@@ -135,11 +170,20 @@ proc setAction*(item: MenuItemRef, action: MenuAction) =
 proc addSeparator*(menu: Menu): MenuItemRef {.discardable.} =
   ## The returned handle only matters for a separator that has to be hidden
   ## along with an optional section below it.
+  ##
+  ## Dropped (never reaches the backend) if the menu is still empty or the
+  ## last thing appended was itself a separator - which happens whenever a
+  ## call site brackets a platform-only run of items (`addStandardItem`'s
+  ## Services/Hide/Show All, real only on macOS) with separators on both
+  ## sides, and that platform is one where the run added nothing. The
+  ## returned ref is a harmless no-op tag in that case: nothing ever
+  ## registers it, so `hidden=`/etc. on it do nothing.
   ensureInstalled()
   result = MenuItemRef(tag: nextTag)
   inc nextTag
-  if menu.handle != nil:
+  if menu.handle != nil and menuTail.getOrDefault(menu.handle, tkOther) == tkOther:
     backend.addSeparator(menu.handle, result.tag)
+    menuTail[menu.handle] = tkSeparator
 
 proc `hidden=`*(item: MenuItemRef, value: bool) =
   ## Hidden items collapse out of the menu entirely, which is how the

@@ -1,0 +1,17 @@
+// Windows resource script for BubiX1turboZ, compiled by windres
+// (scripts/build_nim_app.sh) and linked into the executable.
+//
+// Resource id 1 (CREATEPROCESS_MANIFEST_RESOURCE_ID) - the well-known slot
+// CreateProcess's manifest probing looks at - and the MANIFEST resource
+// type keyword windres recognizes directly (no windows.h macro needed for
+// either the id or the RT_MANIFEST=24 it stands for). See app.manifest's
+// own comment for why this app cannot start without it.
+1 MANIFEST "app.manifest"
+
+// The exe's own icon (Explorer, taskbar, Alt+Tab). Same id (1) as the
+// manifest above without colliding: RT_ICON/RT_GROUP_ICON (what the ICON
+// keyword produces) is a different resource type from RT_MANIFEST.
+// Regenerated from the same source artwork as the other platforms' icons
+// by scripts/make_icon_windows.ps1 and committed, so building never needs
+// that script to run - see its own comment.
+1 ICON "app.ico"

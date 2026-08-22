@@ -10,7 +10,13 @@
 ## payload *is* a zlib stream and its chunk checksum *is* zlib's crc32 -
 ## with libz already linked, the encoder below is the whole format.
 
-{.passL: "-lz".}
+when not defined(windows):
+  {.passL: "-lz".}
+# Windows has no system zlib. scripts/fetch_zlib_windows.sh vendors the
+# upstream source and scripts/build_core.sh compiles it straight into
+# build/libbubix1core.a on that platform, so the objects arrive through the
+# core's own -l flag in build_nim_app.sh rather than a system -lz here; only
+# the header search path (passC, also set there) is still needed.
 
 type
   ULong = culong

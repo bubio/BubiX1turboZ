@@ -51,6 +51,9 @@ proc runFilename(dialog: GtkWidget): string =
       g_free(fn)
   gtk_widget_destroy(dialog)
 
+proc earlyInit*() =
+  discard
+
 proc setParentWindow*(window: pointer) =
   ## The Linux dialogs find the window through gtkshell, not this SDL pointer,
   ## so there is nothing to store.
