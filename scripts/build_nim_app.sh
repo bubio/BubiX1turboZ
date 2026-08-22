@@ -60,8 +60,9 @@ case "$(uname -s)" in
   MINGW*|MSYS*)
     # Windows: SDL2 and zlib.h from the fetched packages (no system SDL2,
     # no system zlib - see fetch_sdl2_windows.sh and deflate.nim); SDL2.dll
-    # and the MinGW runtime DLLs travel beside the executable (see
-    # build_app_windows_dev.sh / build_windows.sh, which copy them all).
+    # travels beside the executable (see build_app_windows_dev.sh /
+    # build_windows.sh, which copy it) while the MinGW runtime is linked in
+    # statically (see PASSL below).
     # mise cannot install nim here (see install_nim_windows.sh's own
     # comment for why), so both nim and the MinGW-w64 gcc it shells out to
     # come from the two fetched toolchains this project pins instead of
@@ -109,20 +110,33 @@ case "$(uname -s)" in
 
     # RPATH is unused on Windows - the loader finds SDL2.dll beside the exe
     # (or on PATH) with no linker-level search path to set, unlike an ELF
-    # rpath or a macOS install name. libgcc/libstdc++/libwinpthread ship as
-    # DLLs beside the exe instead (see build_app_windows_dev.sh /
-    # build_windows.sh, which copy them from the fetched MinGW toolchain) -
-    # the same "bundle the runtime instead of the OS providing it" approach
-    # every other platform here already uses for its own pieces (SDL2 on
-    # all three, GTK on Linux).
-    # -mconsole: makes the console/main-based CRT entry point explicit
-    # rather than relying on GCC's default, after that default was seen to
-    # flip to the WinMain-based one for reasons not run down (a build that
-    # linked cleanly, changed in no way related to entry point selection,
-    # then failed with "undefined reference to WinMain" on an unchanged
-    # recompile - see git history/session notes around this line if it
-    # recurs and is worth investigating further).
-    PASSL="-mconsole -Wl,--entry=mainCRTStartup $WIN_ROOT/$LIB $RES_OBJ -L$SDL2_DIR/lib -lSDL2 -lstdc++"
+    # rpath or a macOS install name. libgcc/libstdc++/libwinpthread are
+    # statically linked in instead of shipped as DLLs - the fetched MinGW
+    # toolchain carries static archives for all three (winlibs' posix-
+    # threads build) - so SDL2.dll is the only runtime piece that still
+    # travels beside the exe (see build_app_windows_dev.sh / build_windows.sh).
+    # A blanket -static was tried first and rejected: it also forces static
+    # resolution of the Win32 import libraries SDL2 and this app need
+    # (winmm, ole32, oleaut32, cfgmgr32, ...), most of which are never
+    # named on this command line, so the link fails outright. -static-libgcc
+    # covers libgcc (gcc's own driver logic honours it because gcc, not this
+    # script, is the one appending -lgcc); libstdc++ and libwinpthread are
+    # named explicitly below, so the same driver flag would not affect them
+    # - they get their own -Wl,-Bstatic/-Bdynamic bracket instead, placed
+    # after -lSDL2 so ld still resolves SDL2 the normal (dynamic-import-
+    # library) way.
+    # -mwindows: GUI subsystem, so Windows does not attach a console window
+    # when the exe is launched (this app has no CLI, and errors already
+    # reach the user through dialogs - see bubix1turboz.nim's own comment
+    # on resolveOrWarn). -Wl,--entry=mainCRTStartup keeps the ordinary
+    # main-based CRT entry point explicit regardless of subsystem, after
+    # GCC's own default was once seen to flip to the WinMain-based one for
+    # reasons not run down (a build that linked cleanly, changed in no way
+    # related to entry point selection, then failed with "undefined
+    # reference to WinMain" on an unchanged recompile - see git
+    # history/session notes around this line if it recurs and is worth
+    # investigating further).
+    PASSL="-mwindows -Wl,--entry=mainCRTStartup -static-libgcc $WIN_ROOT/$LIB $RES_OBJ -L$SDL2_DIR/lib -lSDL2 -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic"
     ;;
   *)
     # Linux: SDL2 from the system (pkg-config), the C++ core and its

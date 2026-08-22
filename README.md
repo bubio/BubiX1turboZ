@@ -78,7 +78,7 @@ BubiX1turboZ は、[Common Source Code Project](https://takeda-toshiya.my.coocan
 ### Windows
 
 - Windows 11 以降 / x86_64
-- 追加のランタイムは不要です。SDL2 と MinGW-w64 のランタイム DLL（`libgcc`・`libstdc++`・`libwinpthread`）は配布物に同梱されています。
+- 追加のランタイムは不要です。SDL2 は `SDL2.dll` として配布物に同梱、MinGW-w64 のランタイム（`libgcc`・`libstdc++`・`libwinpthread`）は実行ファイルへ静的リンクされています。
 - `7z` / `zip` の展開には Windows 10 (1803) 以降に標準搭載の `tar.exe`（libarchive 版、常に bsdtar）を使います。見つからない場合は Linux 同様 7-Zip 系（`7zz` / `7z` / `7za`）を探します。
 
 arm64 版は未提供です（クラシックな MinGW-w64 は Windows/arm64 向けのビルドに向いておらず、別ツールチェーン（llvm-mingw）が要るため今後の対応とします）。Intel Mac 向けとユニバーサルバイナリも今後の対応です。
@@ -289,6 +289,6 @@ sudo apt install imagemagick rpm
 | [GTK3](https://www.gtk.org/) | LGPL-2.1-or-later | Linux のメニューバー・ダイアログ・設定パネル |
 | zlib | zlib License | ステートセーブの圧縮と PNG 出力（macOS/Linux は OS 同梱の libz、Windows はビルド時に取得したソースをコアの静的ライブラリに組み込み） |
 | bsdtar (libarchive) / 7-Zip / unzip | 3-clause BSD License ほか | `7z` / `zip` の展開（macOS は `/usr/bin/tar`、Linux は `libarchive-tools` の `bsdtar`、Windows は標準搭載の `tar.exe`、無ければいずれも `7z` 系または `unzip`） |
-| [MinGW-w64](https://www.mingw-w64.org/) | zlib License ほか | Windows 版のビルドに使う GCC ツールチェーン（`libgcc`・`libstdc++`・`libwinpthread` のランタイム DLL を同梱） |
+| [MinGW-w64](https://www.mingw-w64.org/) | zlib License ほか | Windows 版のビルドに使う GCC ツールチェーン（`libgcc`・`libstdc++`・`libwinpthread` は実行ファイルへ静的リンク） |
 
-macOS では `SDL2.framework` をビルド時に公式配布物として取得し `.app` に同梱します。Linux では AppImage が SDL2 を同梱し、GTK3 はシステムのものを使います。Windows では SDL2 の MinGW-w64 開発パッケージをビルド時に取得し、`SDL2.dll` を配布物に同梱します。zlib と展開用のアーカイバーは、macOS/Linux は OS が提供するものをそのまま利用し（再配布なし）、Windows は zlib のソースをビルド時に取得してコアへ静的リンクします（動的ライブラリとしての再配布はなし）。
+macOS では `SDL2.framework` をビルド時に公式配布物として取得し `.app` に同梱します。Linux では AppImage が SDL2 を同梱し、GTK3 はシステムのものを使います。Windows では SDL2 の MinGW-w64 開発パッケージをビルド時に取得し、`SDL2.dll` を配布物に同梱します（`libgcc`・`libstdc++`・`libwinpthread` は実行ファイルへ静的リンクするため同梱しません）。zlib と展開用のアーカイバーは、macOS/Linux は OS が提供するものをそのまま利用し（再配布なし）、Windows は zlib のソースをビルド時に取得してコアへ静的リンクします（動的ライブラリとしての再配布はなし）。

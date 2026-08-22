@@ -13,9 +13,10 @@
 # already assume, and the one build_core.sh/build_nim_app.sh branch on.
 #
 # Usage: ./scripts/build_app_windows_dev.sh
-# Then:  build/BubiX1turboZ.exe (this script stages SDL2.dll and the MinGW
-#        runtime DLLs beside it - without them Windows refuses to start it
-#        at all, with STATUS_DLL_NOT_FOUND)
+# Then:  build/BubiX1turboZ.exe (this script stages SDL2.dll beside it -
+#        without it Windows refuses to start the exe at all, with
+#        STATUS_DLL_NOT_FOUND. libgcc/libstdc++/libwinpthread are linked
+#        statically into the exe - see build_nim_app.sh.)
 #   No arguments: ROMs, config and save states are read from
 #   %LOCALAPPDATA%\BubiX1turboZ (see src/nim/bubix1/paths.nim).
 
@@ -32,8 +33,4 @@ fi
 ./scripts/build_nim_app.sh build/BubiX1turboZ.exe ''
 
 SDL2_BIN_DIR="$(pwd)/build/toolchain/sdl2-windows/x86_64-w64-mingw32/bin"
-MINGW_BIN_DIR="$(pwd)/build/toolchain/mingw-windows/bin"
 cp "$SDL2_BIN_DIR/SDL2.dll" build/SDL2.dll
-for dll in libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll; do
-  cp "$MINGW_BIN_DIR/$dll" "build/$dll"
-done

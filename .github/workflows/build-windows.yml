@@ -77,10 +77,30 @@ jobs:
         export PATH="$MINGW_BIN_DIR:$PATH"
         "$NIM_BIN_DIR/nimble.exe" install -d -y
 
+    # Only a release run needs the actual named zip: actions/upload-artifact
+    # always wraps whatever it uploads in its own zip for download, and
+    # wrapping an already-zipped file that way leaves whoever downloads a
+    # non-release artifact to test a build with a zip inside a zip. So a
+    # push/pull_request/workflow_dispatch run stops at the staged files and
+    # lets upload-artifact do the only zipping.
     - name: Build portable zip
-      run: ./scripts/build_windows.sh
+      run: |
+        if [ "${{ github.event_name }}" = "release" ]; then
+          ./scripts/build_windows.sh
+        else
+          ./scripts/build_windows.sh --no-zip
+        fi
+
+    - name: Upload staged build artifact
+      if: github.event_name != 'release'
+      uses: actions/upload-artifact@v4
+      with:
+        name: bubix1turboz-windows-x86_64
+        path: build/windows-stage/*
+        if-no-files-found: error
 
     - name: Upload zip artifact
+      if: github.event_name == 'release'
       uses: actions/upload-artifact@v4
       with:
         name: bubix1turboz-windows-x86_64-zip
