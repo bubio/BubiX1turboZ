@@ -73,15 +73,16 @@ jobs:
     - name: Install Nim dependencies
       run: mise exec -- nimble install -d -y
 
-    # A release build additionally produces the dmg; everything else stops
-    # at the .app, which is enough to catch a broken build.
-    - name: Build .app bundle
-      run: |
-        if [ "${{ github.event_name }}" = "release" ]; then
-          ./scripts/build_macos.sh --dmg
-        else
-          ./scripts/build_macos.sh
-        fi
+    # Always produce the dmg, not only at release time: a broken package is
+    # worth catching on a pull request, and it avoids zipping the .app by
+    # hand for the non-release case. That hand-zip step (ditto, needed
+    # because upload-artifact's own directory walk drops the symlinks
+    # inside SDL2.framework) left downloaders with a zip inside a zip,
+    # since upload-artifact always wraps whatever it is given in another
+    # zip. hdiutil's dmg has no such symlink problem, so it goes to
+    # upload-artifact as-is.
+    - name: Build .app bundle and dmg
+      run: ./scripts/build_macos.sh --dmg
 
     # The icon and the tint colour both come from the committed asset
     # catalog. Losing it costs no build step and would go unnoticed
@@ -96,29 +97,7 @@ jobs:
         plutil -p build/BubiX1turboZ.app/Contents/Info.plist \
           | grep -q CFBundleIconName
 
-    # The .app has to be zipped by hand: upload-artifact walks the bundle
-    # and would drop the symlinks inside SDL2.framework. The inner name
-    # must differ from the artifact name below - GitHub wraps artifacts in
-    # a zip named after the artifact, and two nested zips of the same name
-    # leave the user with a download that unpacks into "... 2.zip" beside
-    # itself, which Archive Utility then fails to expand.
-    - name: Package .app (zip)
-      if: github.event_name != 'release'
-      run: |
-        ditto -c -k --sequesterRsrc --keepParent \
-          build/BubiX1turboZ.app \
-          build/BubiX1turboZ.app.zip
-
-    - name: Upload .app artifact
-      if: github.event_name != 'release'
-      uses: actions/upload-artifact@v4
-      with:
-        name: bubix1turboz-macos-arm64-app
-        path: build/BubiX1turboZ.app.zip
-        if-no-files-found: error
-
     - name: Upload dmg artifact
-      if: github.event_name == 'release'
       uses: actions/upload-artifact@v4
       with:
         name: bubix1turboz-macos-arm64-dmg
