@@ -78,6 +78,28 @@ NSWindow *bx1_dialog_parent_window(void)
 */
 static BOOL dialog_running = NO;
 
+/*
+	Ending a sheet is animated, and -endSheet:/-beginSheetModalForWindow:'s
+	own completion handler both return before that animation - and the key
+	window handoff that rides on it - has actually happened: logging
+	[NSApp keyWindow] right after either call showed nil, not `parent`.
+	With nothing key, the emulator window's SDLTranslatorResponder (the
+	Cocoa responder SDL's startTextInput installs to swallow keys it has
+	already handled itself) never becomes firstResponder again, so every
+	key typed afterwards also reaches AppKit's normal dispatch unclaimed
+	and gets it a system beep - the game still responds (SDL reads keys
+	independently of Cocoa's responder chain), so this reads as "it works,
+	but macOS is upset about it," on every key, forever, until something
+	else makes a window key. Asserting the key window directly sidesteps
+	waiting on that animation.
+*/
+static void restore_key_window(NSWindow *parent)
+{
+	if (parent != nil) {
+		[parent makeKeyAndOrderFront:nil];
+	}
+}
+
 // Both runners below return what the dialog itself would have returned
 // app-modal, so their callers read the answer the same way either way.
 static NSModalResponse run_panel(NSSavePanel *panel)
@@ -99,6 +121,7 @@ static NSModalResponse run_panel(NSSavePanel *panel)
 			[NSApp stopModalWithCode:response];
 		}];
 		[NSApp runModalForWindow:panel];
+		restore_key_window(parent);
 	}
 	dialog_running = NO;
 	return answer;
@@ -123,6 +146,7 @@ static NSModalResponse run_alert(NSAlert *alert)
 			[NSApp stopModalWithCode:response];
 		}];
 		[NSApp runModalForWindow:[alert window]];
+		restore_key_window(parent);
 	}
 	dialog_running = NO;
 	return answer;
@@ -156,6 +180,8 @@ NSModalResponse bx1_dialog_run_window(NSWindow *window)
 		[parent beginSheet:window completionHandler:nil];
 		answer = [NSApp runModalForWindow:window];
 		[parent endSheet:window];
+		[window orderOut:nil];
+		restore_key_window(parent);
 	}
 	dialog_running = NO;
 	return answer;
