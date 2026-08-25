@@ -148,7 +148,36 @@ const scancodeToVk*: array[512, int32] = block:
   t
 
 ## Translates one SDL scancode to a win32 VK code, or 0 if unmapped.
-proc toVk*(scancode: Scancode): int32 =
+##
+## `arrowsAsTenkey` and `numberRowAsTenkey` are host-side substitutes for a
+## physical ten-key pad, which 65%/TKL keyboards do not have: with either on,
+## the named cluster sends the X1 matrix's ten-key VK codes
+## (`src/core/vm/x1/keyboard.cpp`) instead of its own. They override the
+## static table rather than being baked into it because they are runtime
+## preferences (Host > Keyboard, hostconfig.nim), not something fixed at
+## compile time.
+proc toVk*(scancode: Scancode, arrowsAsTenkey = false,
+           numberRowAsTenkey = false): int32 =
+  if arrowsAsTenkey:
+    case scancode
+    of SDL_SCANCODE_UP: return 0x68    # VK_NUMPAD8 ("N8", up on the X1 ten-key)
+    of SDL_SCANCODE_DOWN: return 0x62  # VK_NUMPAD2 ("N2", down)
+    of SDL_SCANCODE_LEFT: return 0x64  # VK_NUMPAD4 ("N4", left)
+    of SDL_SCANCODE_RIGHT: return 0x66 # VK_NUMPAD6 ("N6", right)
+    else: discard
+  if numberRowAsTenkey:
+    case scancode
+    of SDL_SCANCODE_0: return 0x60     # VK_NUMPAD0
+    of SDL_SCANCODE_1: return 0x61
+    of SDL_SCANCODE_2: return 0x62
+    of SDL_SCANCODE_3: return 0x63
+    of SDL_SCANCODE_4: return 0x64
+    of SDL_SCANCODE_5: return 0x65
+    of SDL_SCANCODE_6: return 0x66
+    of SDL_SCANCODE_7: return 0x67
+    of SDL_SCANCODE_8: return 0x68
+    of SDL_SCANCODE_9: return 0x69
+    else: discard
   let i = scancode.int
   if i >= 0 and i < scancodeToVk.len:
     result = scancodeToVk[i]

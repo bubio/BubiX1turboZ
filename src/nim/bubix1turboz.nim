@@ -446,6 +446,13 @@ proc main() =
   # stretched fullscreen picture.
   var scaleQuality = clamp(hostCfg.getInt("ScaleQuality", 0), 0, 1)
 
+  # Host-side ten-key substitutes for keyboards without a physical numpad
+  # (65%/TKL layouts) - see keymap.toVk. Read up here for the same reason
+  # as showStatusBar above: the Host menu that flips them is built before
+  # the SDL event loop that consults them.
+  var arrowsAsTenkey = hostCfg.getBool("ArrowsAsTenkey", false)
+  var numberRowAsTenkey = hostCfg.getBool("NumberRowAsTenkey", false)
+
   # Assigned once the Volume panel exists, further down. A reset can rebuild
   # the VM (see vmSoundType above), and the core hands the new one the
   # per-device levels straight out of config - without the master volume
@@ -1879,6 +1886,24 @@ proc main() =
   # Where the original keeps it: ID_SOUND_VOLUME is inside POPUP "Sound".
   hostSoundMenu.addItem(tr(msgVolume), proc () = showVolumeWindow())
 
+  # --- Host > Keyboard ---
+  # Ten-key substitutes for hosts without a physical numpad (65%/TKL
+  # keyboards): see keymap.toVk. Both are off by default so a keyboard that
+  # does have a numpad keeps its cursor keys and number row working
+  # normally; a player without one turns on whichever cluster their game
+  # needs the ten-key codes from.
+  let hostKeyboardMenu = hostMenu.addSubmenu(tr(msgHostKeyboard))
+  let arrowsAsTenkeyItem = hostKeyboardMenu.addItem(tr(msgArrowsAsTenkey))
+  arrowsAsTenkeyItem.checked = arrowsAsTenkey
+  arrowsAsTenkeyItem.setAction(proc () =
+    arrowsAsTenkeyItem.checked = not arrowsAsTenkeyItem.checked
+    arrowsAsTenkey = arrowsAsTenkeyItem.checked)
+  let numberRowAsTenkeyItem = hostKeyboardMenu.addItem(tr(msgNumberRowAsTenkey))
+  numberRowAsTenkeyItem.checked = numberRowAsTenkey
+  numberRowAsTenkeyItem.setAction(proc () =
+    numberRowAsTenkeyItem.checked = not numberRowAsTenkeyItem.checked
+    numberRowAsTenkey = numberRowAsTenkeyItem.checked)
+
   hostMenu.addSeparator()
   let statusBarItem = hostMenu.addItem(tr(msgShowStatusBar))
   statusBarItem.checked = showStatusBar
@@ -2204,12 +2229,12 @@ proc main() =
             takenByMenu = nativemenu.handleAccelerator(ch, ctrl, shift, alt, gui)
             menuAccelHeld = takenByMenu
         if not takenByMenu:
-          let vk = keymap.toVk(ev.key.keysym.scancode)
+          let vk = keymap.toVk(ev.key.keysym.scancode, arrowsAsTenkey, numberRowAsTenkey)
           if vk != 0:
             bx1KeyDown(h, vk, ev.key.repeat.cint)
       of KeyUp:
         menuAccelHeld = false
-        let vk = keymap.toVk(ev.key.keysym.scancode)
+        let vk = keymap.toVk(ev.key.keysym.scancode, arrowsAsTenkey, numberRowAsTenkey)
         if vk != 0:
           bx1KeyUp(h, vk)
       of TextInput:
@@ -2341,6 +2366,8 @@ proc main() =
   recentfiles.save(paths.recentFilesPath(), recent)
   hostCfg.setBool("ShowStatusBar", showStatusBar)
   hostCfg.setInt("ScaleQuality", scaleQuality)
+  hostCfg.setBool("ArrowsAsTenkey", arrowsAsTenkey)
+  hostCfg.setBool("NumberRowAsTenkey", numberRowAsTenkey)
   # "auto", "en" or "ja" - read back at the very start of the next launch,
   # before anything can put a word on screen.
   hostCfg.setStr("UILanguage", uiLanguage)
