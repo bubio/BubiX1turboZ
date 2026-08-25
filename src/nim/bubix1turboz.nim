@@ -49,9 +49,11 @@
 ## HDD are exposed here - feature reduction happens at this layer, not in
 ## the core.
 
-import std/[atomics, options, os, strformat, strutils, times]
+import std/[atomics, options, os, strformat, strutils, tables, times]
 import sdl2
 import sdl2/audio
+import sdl2/gamecontroller
+import sdl2/joystick
 import bubix1/core
 import bubix1/keymap
 import bubix1/paths
@@ -378,7 +380,7 @@ proc main() =
 
   # Creates NSApp, which nothing that shows a window or an alert can do
   # without. Nothing here needs a ROM, so it can come first.
-  if not sdl2.init(INIT_VIDEO or INIT_AUDIO or INIT_EVENTS):
+  if not sdl2.init(INIT_VIDEO or INIT_AUDIO or INIT_EVENTS or INIT_GAMECONTROLLER):
     fail "SDL_Init failed: " & $getError()
 
   # After SDL_Init for the application object the alert below needs, and
@@ -2199,6 +2201,47 @@ proc main() =
   # action runs once per press of the keys and the key never reaches the
   # guest halfway through.
   var menuAccelHeld = false
+
+  # Real gamepads, wired straight to the X1's two joystick ports
+  # (vm/x1/joystick.cpp: 0x01 up / 0x02 down / 0x04 left / 0x08 right /
+  # 0x10 button 1 / 0x20 button 2) through the existing `bx1SetJoy` bridge
+  # call. No binding UI - SDL's own controller database already gives a
+  # sane, fixed layout, and the original's binding dialogs (Joystick #1/#2,
+  # Joystick To Keyboard) are the kind of feature this port deliberately
+  # does not carry over (see HostMenu.md).
+  const
+    JoyUp = 0x01'u32
+    JoyDown = 0x02'u32
+    JoyLeft = 0x04'u32
+    JoyRight = 0x08'u32
+    JoyButton1 = 0x10'u32
+    JoyButton2 = 0x20'u32
+    GamepadAxisDeadzone = 8000'i16
+  var gamepadControllers: array[2, GameControllerPtr] # nil = port free
+  var gamepadBits: array[2, uint32]
+  var gamepadPortOf = initTable[JoystickID, int]() # SDL instance id -> port
+
+  proc gamepadSetBit(port: int, mask: uint32, on: bool) =
+    var bits = gamepadBits[port]
+    if on: bits = bits or mask
+    else: bits = bits and not mask
+    if bits != gamepadBits[port]:
+      gamepadBits[port] = bits
+      bx1SetJoy(h, port.cint, bits)
+
+  proc gamepadReleaseAll() =
+    for port in 0 ..< gamepadControllers.len:
+      if gamepadBits[port] != 0:
+        gamepadBits[port] = 0
+        bx1SetJoy(h, port.cint, 0)
+
+  proc gamepadClose(port: int) =
+    if gamepadControllers[port] != nil:
+      gamepadControllers[port].close()
+      gamepadControllers[port] = nil
+      gamepadBits[port] = 0
+      bx1SetJoy(h, port.cint, 0)
+
   while running():
     # Beside SDL's own queue, drain the host toolkit's: on Linux the menu bar
     # and any non-modal panel live in GTK's event loop (a no-op elsewhere).
@@ -2237,6 +2280,54 @@ proc main() =
         let vk = keymap.toVk(ev.key.keysym.scancode, arrowsAsTenkey, numberRowAsTenkey)
         if vk != 0:
           bx1KeyUp(h, vk)
+      of ControllerDeviceAdded:
+        # `which` is a device index here (not yet an instance id - that only
+        # exists once the controller is open), and only the first two slots
+        # matter: the X1 has two joystick ports.
+        let deviceIndex = ev.cdevice.which.cint
+        var port = -1
+        for p in 0 ..< gamepadControllers.len:
+          if gamepadControllers[p] == nil:
+            port = p
+            break
+        if port >= 0 and isGameController(deviceIndex).bool:
+          let ctrl = gameControllerOpen(deviceIndex)
+          if ctrl != nil:
+            gamepadControllers[port] = ctrl
+            gamepadPortOf[ctrl.getJoystick().instanceID] = port
+      of ControllerDeviceRemoved:
+        # `which` is the instance id for a REMOVED event.
+        let instanceId = ev.cdevice.which.JoystickID
+        if gamepadPortOf.hasKey(instanceId):
+          let port = gamepadPortOf[instanceId]
+          gamepadPortOf.del(instanceId)
+          gamepadClose(port)
+      of ControllerButtonDown, ControllerButtonUp:
+        let instanceId = ev.cbutton.which.JoystickID
+        if gamepadPortOf.hasKey(instanceId):
+          let port = gamepadPortOf[instanceId]
+          let pressed = ev.cbutton.state == 1'u8 # SDL_PRESSED
+          case ev.cbutton.button.GameControllerButton
+          of SDL_CONTROLLER_BUTTON_DPAD_UP: gamepadSetBit(port, JoyUp, pressed)
+          of SDL_CONTROLLER_BUTTON_DPAD_DOWN: gamepadSetBit(port, JoyDown, pressed)
+          of SDL_CONTROLLER_BUTTON_DPAD_LEFT: gamepadSetBit(port, JoyLeft, pressed)
+          of SDL_CONTROLLER_BUTTON_DPAD_RIGHT: gamepadSetBit(port, JoyRight, pressed)
+          of SDL_CONTROLLER_BUTTON_A: gamepadSetBit(port, JoyButton1, pressed)
+          of SDL_CONTROLLER_BUTTON_B: gamepadSetBit(port, JoyButton2, pressed)
+          else: discard
+      of ControllerAxisMotion:
+        let instanceId = ev.caxis.which.JoystickID
+        if gamepadPortOf.hasKey(instanceId):
+          let port = gamepadPortOf[instanceId]
+          let value = ev.caxis.value
+          case ev.caxis.axis.GameControllerAxis
+          of SDL_CONTROLLER_AXIS_LEFTX:
+            gamepadSetBit(port, JoyLeft, value < -GamepadAxisDeadzone)
+            gamepadSetBit(port, JoyRight, value > GamepadAxisDeadzone)
+          of SDL_CONTROLLER_AXIS_LEFTY:
+            gamepadSetBit(port, JoyUp, value < -GamepadAxisDeadzone)
+            gamepadSetBit(port, JoyDown, value > GamepadAxisDeadzone)
+          else: discard
       of TextInput:
         # The character a keystroke produced, forwarded alongside the
         # physical key above - the same pairing Win32 does with WM_KEYDOWN
@@ -2271,6 +2362,10 @@ proc main() =
           for vk in keymap.scancodeToVk:
             if vk != 0:
               bx1KeyUp(h, vk)
+          # Same reasoning as above: a button-up lost while unfocused
+          # (SDL suppresses controller events without focus by default)
+          # must not leave the guest thinking a button is held forever.
+          gamepadReleaseAll()
         else:
           discard
       of DropFile:
@@ -2406,6 +2501,8 @@ proc main() =
   # No dialog can outlive the window it would hang from.
   filedialog.setParentWindow(nil)
   hostwindow.destroy(sdlWin)
+  for port in 0 ..< gamepadControllers.len:
+    gamepadClose(port)
   sdl2.quit()
   bx1Destroy(h)
 
