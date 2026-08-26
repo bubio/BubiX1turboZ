@@ -4,9 +4,13 @@
   <img src="docs/AppIcon.png" alt="BubiX1turboZ" width="128" height="128">
 </p>
 
-BubiX1turboZ は、[Common Source Code Project](https://takeda-toshiya.my.coocan.jp/common/index.html) の `eX1turboZ` をベースにした Sharp X1 turbo Z エミュレーターのマルチプラットフォーム移植版です。
+Sharp X1 turbo Zのエミュレーターです。マルチプラットフォームです。
+
 
 <p align="center">
+  <a href="https://github.com/bubio/BubiX1turboZ/releases/latest">
+    <img src="https://img.shields.io/github/v/release/bubio/BubiX1turboZ" alt="Latest Release">
+  </a>
   <a href="https://github.com/bubio/BubiX1turboZ/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/bubio/BubiX1turboZ" alt="License">
   </a>
@@ -19,279 +23,117 @@ BubiX1turboZ は、[Common Source Code Project](https://takeda-toshiya.my.coocan
   <a href="https://github.com/bubio/BubiX1turboZ/actions/workflows/build-windows.yml">
     <img src="https://github.com/bubio/BubiX1turboZ/actions/workflows/build-windows.yml/badge.svg" alt="Windows">
   </a>
-  <a href="https://github.com/bubio/BubiX1turboZ/actions/workflows/check-portability.yml">
-    <img src="https://github.com/bubio/BubiX1turboZ/actions/workflows/check-portability.yml/badge.svg" alt="Portability">
-  </a>
 </p>
 
-エミュレーションコアは C++ のまま手を入れず、その上のアプリケーション層を [Nim](https://nim-lang.org/) で書き起こしています。
+## BubiX1turboZとは
+---
+BubiX1turboZは、[Common Source Code Project](https://takeda-toshiya.my.coocan.jp/common/index.html)の`eX1turboZ` をベースにしたSharp X1 turbo Zのマルチプラットフォームエミュレーターです。
 
-<p align="center"><img src="docs/Screenshot.png" alt="琥珀色の遺言 on BubiX1turboZ running on macOS Tahoe"></p>
+<p align="center">
+  <img width="752" src="docs/Screenshot.png" alt="BubiX1turboZ Screenshot">
+</p>
 
+エミュレーションコア（C++）はそのまま活用し、アプリケーション層をNimで書き起こすことでマルチプラットフォーム（macOS / Linux / Windows）に対応しています。
 
-## About
+<br />
 
-- **C++ コア + Nim アプリケーション層の二層構成**
-  eX1turboZ のコアはそのまま使い、OS 依存の処理はすべて上位層で吸収しています。
-- **GUI はプラットフォームのネイティブ API**
-  メニューバー・ダイアログ・設定パネルは、macOS では AppKit、Linux では GTK3、Windows では Win32 API を直接使います。クロスプラットフォームの GUI ツールキットは使いません。Linux・Windows にはグローバルメニューバーが無いため、どちらもメニューバーをウィンドウ上部に組み込み、SDL の描画面をその下に埋め込みます（Windows は `SetMenu` でアプリのウィンドウに直接付けるだけで済み、Linux の X11 再親化ほどの仕掛けは要りません）。
-- **メディア操作が速い**
-  `D88` などのディスクイメージを、メニュー・ドラッグ&ドロップのどちらからでも読み込めます。ドロップした場合は自動でリセットして起動します。
-- **アーカイブをそのまま開ける**
-  `7z` / `zip` / `m3u` / `m3u8` を、生のディスクイメージと同じ操作で開けます。書庫は一度だけ展開され、以後は展開済みのものが使われます。
-- **D88 の複数イメージ管理に対応**
-  1 つの `D88` に複数バンクが入っている場合はピッカーで一覧し、FD0 / FD1 に割り当てできます。
-- **ステートセーブ**
-  クイックセーブ / クイックロードと、サムネイル付きのスロット選択に対応しています。
-- **ファイル配置は OS の流儀どおり**
-  ROM・設定・ステートは `Application Support`（Linux は XDG、Windows は `%LOCALAPPDATA%`）に置き、録音は `~/Music`、スクリーンショットは `~/Pictures` に保存します。実行ファイルと同じ場所には何も書き込みません。
-- **日本語 / 英語表示**
-  既定ではシステムの言語設定に従い、`Host -> Language` で明示的に選ぶこともできます。
+## インストール方法
+---
 
-## Features
+[リリース](https://github.com/bubio/BubiX1turboZ/releases)からお手持ちの環境にあった実行ファイルをダウンロードしてください。
 
-- ディスクイメージ（`d88` / `d77` / `d8e` / `1dd` / `2d`）の挿入・イジェクト
-- アーカイブ・プレイリスト（`7z` / `zip` / `m3u` / `m3u8`）の読み込み
-- メディアファイルのドラッグ&ドロップと自動リセット
-- ブランクディスクの作成、ライトプロテクト、展開済みディスクの書き出し
-- `Recent Files`
-- クイックセーブ / クイックロード、スロット指定のステートセーブ
-- CPU クロック倍率、`Full Speed`、`NMI`、リセット
-- テキストの貼り付け（オートキー）、ローマ字かな変換
-- キーボードモード、音源ボード、FDD ノイズ、走査線などのデバイス設定
-- 画面倍率、アスペクト比、フルスクリーンのストレッチ方法、フィルタの切り替え
-- `Rec Sound`（WAV 録音）、`Capture Screen`（PNG 保存）
-- 音量パネル、ステータスバー
-- 日本語 / 英語の UI
+<br />
 
-## System Requirements
+### 動作環境
 
-### macOS
+| プラットフォーム | CPU | 最小OSバージョン | 実行ファイル |
+| --- | --- | --- | --- |
+| macOS | Apple Silicon | macOS 13.5 Ventura以降 | [DMG](https://github.com/bubio/BubiX1turboZ/releases/latest) |
+| Linux | amd64 / arm64 | Ubuntu 22.04以降 | [AppImage / .deb / .rpm](https://github.com/bubio/BubiX1turboZ/releases/latest) |
+| Windows | x86_64 | Windows 11以降 | [ZIP](https://github.com/bubio/BubiX1turboZ/releases/latest) |
 
-- macOS 13.5 (Ventura) 以降
-- Apple シリコン (arm64)
+<br />
 
-### Linux
-
-- Ubuntu 22.04 以降（または同等のディストリビューション） / amd64・arm64
-- GTK3（`libgtk-3-0` / `gtk3`）と SDL2。AppImage は SDL2 を同梱し GTK3 はシステムのものを使います。`.deb` と `.rpm` は両方を依存関係として要求します。
-- `7z` / `zip` の展開には外部のアーカイバーを使います。bsdtar（`libarchive-tools`）が第一候補で、無ければ 7-Zip（`p7zip-full` の `7z` / `7za`、または `7zz`）、`zip` だけは `unzip` でも展開できます。`.deb` は `libarchive-tools | p7zip-full` を依存関係として要求し、`.rpm` は `bsdtar` を推奨（Recommends）します。AppImage で使う場合はどちらかをシステムに入れてください（生のディスクイメージには不要です）。いずれも無い状態でアーカイブを開くと、何を入れればよいかを伝えるダイアログが出ます。
-- X11 セッション（メニューバー埋め込みは X11 のウィンドウ再ペアレントを使います）
-
-### Windows
-
-- Windows 11 以降 / x86_64
-- 追加のランタイムは不要です。SDL2 は `SDL2.dll` として配布物に同梱、MinGW-w64 のランタイム（`libgcc`・`libstdc++`・`libwinpthread`）は実行ファイルへ静的リンクされています。
-- `7z` / `zip` の展開には Windows 10 (1803) 以降に標準搭載の `tar.exe`（libarchive 版、常に bsdtar）を使います。見つからない場合は Linux 同様 7-Zip 系（`7zz` / `7z` / `7za`）を探します。
-
-arm64 版は未提供です（クラシックな MinGW-w64 は Windows/arm64 向けのビルドに向いておらず、別ツールチェーン（llvm-mingw）が要るため今後の対応とします）。Intel Mac 向けとユニバーサルバイナリも今後の対応です。
-
-## Install
-
-### macOS
-
-[Releases](https://github.com/bubio/BubiX1turboZ/releases) ページから dmg をダウンロードし、`BubiX1turboZ.app` を `Applications` にドラッグしてください。
-
-### Linux
-
-[Releases](https://github.com/bubio/BubiX1turboZ/releases) から AppImage・`.deb`・`.rpm` のいずれかをダウンロードします。
-
-- **AppImage**: 実行権限を付けてそのまま起動できます。追加のインストールは不要です。
-  ```sh
-  chmod +x bubix1turboz-*-linux-*.AppImage
-  ./bubix1turboz-*-linux-*.AppImage
-  ```
-- **.deb**（Ubuntu / Debian 系）:
-  ```sh
-  sudo apt install ./bubix1turboz-*-linux-*.deb
-  ```
-- **.rpm**（Fedora / RHEL 系、openSUSE）:
-  ```sh
-  sudo dnf install ./bubix1turboz-*-linux-*.rpm   # openSUSE なら sudo zypper install
-  ```
-
-### Windows
-
-[Releases](https://github.com/bubio/BubiX1turboZ/releases) から zip をダウンロードし、好きなフォルダに展開して `BubiX1turboZ.exe` を実行してください。インストーラはありません（AppImage と同じく、展開してそのまま動く形です）。
-
-### CI 生成物一覧
-
-| OS | CI Artifact 名 | Release Asset 名 |
-|---|---|---|
-| macOS (arm64) | `bubix1turboz-macos-arm64.zip` | `bubix1turboz-{version}-macos-arm64.dmg` |
-| Linux (amd64) | `bubix1turboz-linux-amd64-appimage` / `-deb` / `-rpm` | `bubix1turboz-{version}-linux-amd64.AppImage` / `.deb` / `.rpm` |
-| Linux (arm64) | `bubix1turboz-linux-arm64-appimage` / `-deb` / `-rpm` | `bubix1turboz-{version}-linux-arm64.AppImage` / `.deb` / `.rpm` |
-| Windows (x86_64) | `bubix1turboz-windows-x86_64-zip` | `bubix1turboz-{version}-windows-x86_64.zip` |
-
-> **macOS での注意**: このアプリは Apple Developer ID による署名・公証（notarization）を受けていないため、初回起動時に Gatekeeper によってブロックされます。以下のいずれかの方法で回避できます：
->
-> **方法1: ターミナルで隔離フラグを削除**
-> ```bash
-> xattr -dr com.apple.quarantine /Applications/BubiX1turboZ.app
-> ```
->
-> **方法2: システム設定から許可**
-> 1. アプリを開こうとしてブロックされた後
-> 2. 「システム設定」→「プライバシーとセキュリティ」を開く
-> 3. 「"BubiX1turboZ"は開発元を確認できないため、使用がブロックされました」の横にある「このまま開く」をクリック
->
-> いずれも初回のみの操作です。
-
-> **Windows での注意**: このアプリはコード署名を受けていないため、初回起動時に Windows SmartScreen が警告を出すことがあります。「詳細情報」→「実行」の順にクリックすると起動できます。初回のみの操作です。
-
-## 使い始める前に
-
-`BubiX1turboZ` には ROM イメージは含まれていません。ROM 一式を次の場所に置いてください（フォルダは初回起動時に作成されます）。
-
-| OS | ROM 配置先 |
-|---|---|
-| macOS | `~/Library/Application Support/BubiX1turboZ/roms/` |
-| Windows | `%LOCALAPPDATA%\BubiX1turboZ\roms\` |
-| Linux | `~/.local/share/BubiX1turboZ/roms/` |
-
-必要なファイル名:
+## ROMファイル
+---
+起動には以下のROMファイルが必要です。
 
 - `IPLROM.X1T`
 - `FNT0808.X1`
 - `FNT0816.X1`
 - `FNT1616.X1`
 
-ROM が入っていない状態で起動すると、置き場所を知らせるダイアログが表示されます。「ROM フォルダを開く」を押すとそのフォルダがファイルマネージャー（macOS は Finder、Windows は エクスプローラー、Linux はデスクトップ環境既定のもの）で開きます。
+<br />
 
-設定ファイルとステートセーブも同じフォルダ以下に保存されます。
+### 配置場所
+ROMファイルの配置場所は以下になります（一度、アプリケーションを起動するとフォルダが作成されます）。
 
-## 基本操作
+**macOS:**
+```shell
+"~/Library/Application Support/BubiX1turboZ/roms/"
+```
 
-- `Disk -> FD0 / FD1 -> Insert...` でディスクを開けます。
-- ディスクイメージやアーカイブをウィンドウへドラッグ&ドロップしても読み込めます（自動でリセットがかかります）。
-- `Disk -> FD0 & FD1 -> Insert...` で 2 ドライブ分をまとめて挿入できます。
-- `Device` メニューからキーボードモード、音源ボード、画面設定を変更できます。
-- `Host -> Screen` でウィンドウ倍率・アスペクト比・フルスクリーンの表示方法を切り替えられます。
-- `Host -> Volume` で各音源のバランスを調整できます。
+**Linux:**
+```shell
+"~/.local/share/BubiX1turboZ/roms/"
+```
 
-よく使うショートカット（macOS の `Cmd` は Linux / Windows では `Ctrl`）:
+**Windows:**
+```shell
+"%LOCALAPPDATA%\BubiX1turboZ\roms\"
+```
+
+<br />
+
+## 使用方法
+---
+
+- `Disk -> FD0 / FD1` メニュー、またはウィンドウへのドラッグ＆ドロップでディスクイメージ（`d88` / `d77` / `d8e` / `1dd` / `2d`）やアーカイブ（`7z` / `zip` / `m3u` / `m3u8`）を挿入できます。
+- ドラッグ＆ドロップ時は自動でリセットが実行されます。
+
+### 主なショートカット
 
 - `Cmd+R` / `Ctrl+R`: リセット
 - `Cmd+V` / `Ctrl+V`: テキストの貼り付け（オートキー）
-- `Cmd+S` / `Ctrl+S` ・ `Cmd+L` / `Ctrl+L`: クイックセーブ / クイックロード
-- `Cmd+3` / `Ctrl+3`: FD0 & FD1 にまとめて挿入
+- `Cmd+S` / `Ctrl+S` / `Cmd+L` / `Ctrl+L`: クイックセーブ / クイックロード
 - `Cmd+Ctrl+F`: フルスクリーン切り替え
 
-> **Linux / Windows でのメニュー操作について**: ゲーム画面にキーボードフォーカスがある間は、押したキーはゲスト（エミュレーター）へ送られるため、メニューのキーボードショートカットは発火しないことがあります。メニューはクリックで操作するのが確実です（ショートカット表示は目安です）。
+<br />
 
-## ソースからビルドする
-
-macOS と Linux では [mise](https://mise.jdx.dev/) で Nim ツールチェーン（バージョンは `mise.toml` で固定）を用意します。
-
-```sh
-mise plugins install nim https://github.com/asdf-community/asdf-nim
-mise install
-mise exec -- nimble install -d -y
-```
-
-Windows は別扱いです。`nim` を提供する asdf-nim プラグインは bash スクリプトで、mise の Windows バックエンドでは実行できません（`bin/list-all` を直接実行しようとして「有効な Win32 アプリケーションではありません」で失敗することを確認済みです）。代わりに `scripts/install_nim_windows.sh` が `mise.toml` に固定されたバージョンの Nim 公式 Windows zip を、`scripts/fetch_mingw_windows.sh` が MinGW-w64 GCC を、それぞれ取得します（後述のビルドスクリプトが未取得なら自動的に呼び出します）。依存パッケージのインストールだけは Windows でも明示的に行います。
-
-```sh
-./scripts/install_nim_windows.sh
-./scripts/fetch_mingw_windows.sh
-. build/toolchain/nim-windows/env.sh
-. build/toolchain/mingw-windows/env.sh
-PATH="$MINGW_BIN_DIR:$PATH" "$NIM_BIN_DIR/nimble.exe" install -d -y
-```
+## ビルド方法
+---
 
 ### macOS
 
-- macOS 13.5 以降 / Xcode Command Line Tools
-
-SDL2 は公式配布の `SDL2.framework` をビルド時に自動取得するため、Homebrew の SDL は不要です。Xcode 本体があればアプリ独自のアクセントカラーも埋め込まれます（`actool` を使うため。無い場合はシステムのアクセントカラーになります）。
-
-```sh
-# .app バンドルと dmg
+```shell
 ./scripts/build_macos.sh --dmg
-```
-
-`build/BubiX1turboZ.app` と `build/bubix1turboz-<version>-macos-arm64.dmg` が生成されます。
-
-アプリ本体だけを繰り返しビルドする場合は、C++ コアをビルドしたあとに開発用スクリプトを使うほうが高速です。
-
-```sh
-./scripts/build_core.sh all
-./scripts/build_app_macos_dev.sh
 ```
 
 ### Linux
 
-- Ubuntu 22.04 以降 / g++ / SDL2・GTK3・zlib の開発パッケージ
-
-```sh
-sudo apt install libsdl2-dev libgtk-3-dev zlib1g-dev
-
-# AppImage・.deb・.rpm（パッケージング用に imagemagick と rpm も使います）
-sudo apt install imagemagick rpm
+```shell
+sudo apt install libsdl2-dev libgtk-3-dev zlib1g-dev imagemagick rpm
 ./scripts/build_linux.sh --appimage --deb --rpm
-```
-
-`build/bubix1turboz-<version>-linux-<arch>.AppImage` と同 `.deb`・`.rpm` が生成されます（AppImage の生成には `appimagetool` を自動取得します）。`.rpm` は Debian 系でも `rpmbuild`（`rpm` パッケージ）さえあれば作れます。
-
-アプリ本体だけを繰り返しビルドする場合:
-
-```sh
-./scripts/build_core.sh all
-./scripts/build_app_linux_dev.sh
-./build/BubiX1turboZ
 ```
 
 ### Windows
 
-- Windows 11 以降 / [Git for Windows](https://gitforwindows.org/)（このプロジェクトのスクリプトはすべて bash で書かれています）
-- SDL2・MinGW-w64 GCC・zlib はいずれもビルドスクリプトが自動取得します（`scripts/fetch_sdl2_windows.sh` / `fetch_mingw_windows.sh` / `fetch_zlib_windows.sh`）。追加のパッケージインストールは不要です。
-
-```sh
-# ポータブル zip（インストーラなし、展開してそのまま動く形）
+```shell
 ./scripts/build_windows.sh
 ```
 
-`build/bubix1turboz-<version>-windows-x86_64.zip` が生成されます。x86_64 のみです（クラシックな MinGW-w64 は Windows/arm64 に向いていないため、arm64 は今後の対応です）。
+<br />
 
-アプリ本体だけを繰り返しビルドする場合:
+## 謝辞
+---
+素晴らしいエミュレーターコア（eX1turboZ）を公開されている武田 茂樹（Takeda, Toshiya）氏に感謝いたします。
 
-```sh
-./scripts/build_core.sh all
-./scripts/build_app_windows_dev.sh
-./build/BubiX1turboZ.exe
-```
+<br />
 
-## 現在の注意点
+## 使用しているOSSのライセンス
 
-- ROM イメージは同梱していません。
-- 提供しているビルドは macOS (Apple シリコン) 版、Linux (amd64・arm64) 版、Windows (x86_64) 版です。Windows の arm64 版は未提供です。
-- Linux では X11 セッションを前提としています（Wayland では XWayland 経由で動作します）。
-- Windows のコード署名は行っていません（README の「Windows での注意」参照）。
-- CMT（テープ）には対応していません。UI からの到達経路を塞いでいます。
-- 市販ゲームの実行に不要な機能は意図的に実装していません（FDD は 2 基、HDD 非対応など）。
-- 実ゲームによる動作検証と、ユーザー向け操作マニュアル（`docs/UserManual.md`）は作業中です。
-- オリジナルの eX1turboZ と完全に同一の挙動を保証するものではありません。
-
-## クレジット
-
-- Original eX1turboZ by Takeda, Toshiya ([Common Source Code Project](https://takeda-toshiya.my.coocan.jp/common/index.html))
-- macOS / Linux / Windows Nim + SDL2 port maintained by bubio
-
-## ライセンス
-
-エミュレーションコアの由来である eX1turboZ と同じ [GNU General Public License v2 (or later)](LICENSE) です。
-
-### サードパーティ
-
-本プロジェクトは以下のサードパーティソフトウェアを利用しています。
-
-| ライブラリ | ライセンス | 用途 |
-|---|---|---|
-| [eX1turboZ (Common Source Code Project)](https://takeda-toshiya.my.coocan.jp/common/index.html) | GPL-2.0-or-later | エミュレーションコア |
-| [SDL2](https://github.com/libsdl-org/SDL) | zlib License | ウィンドウ、入力、オーディオ、レンダリング |
-| [GTK3](https://www.gtk.org/) | LGPL-2.1-or-later | Linux のメニューバー・ダイアログ・設定パネル |
-| zlib | zlib License | ステートセーブの圧縮と PNG 出力（macOS/Linux は OS 同梱の libz、Windows はビルド時に取得したソースをコアの静的ライブラリに組み込み） |
-| bsdtar (libarchive) / 7-Zip / unzip | 3-clause BSD License ほか | `7z` / `zip` の展開（macOS は `/usr/bin/tar`、Linux は `libarchive-tools` の `bsdtar`、Windows は標準搭載の `tar.exe`、無ければいずれも `7z` 系または `unzip`） |
-| [MinGW-w64](https://www.mingw-w64.org/) | zlib License ほか | Windows 版のビルドに使う GCC ツールチェーン（`libgcc`・`libstdc++`・`libwinpthread` は実行ファイルへ静的リンク） |
-
-macOS では `SDL2.framework` をビルド時に公式配布物として取得し `.app` に同梱します。Linux では AppImage が SDL2 を同梱し、GTK3 はシステムのものを使います。Windows では SDL2 の MinGW-w64 開発パッケージをビルド時に取得し、`SDL2.dll` を配布物に同梱します（`libgcc`・`libstdc++`・`libwinpthread` は実行ファイルへ静的リンクするため同梱しません）。zlib と展開用のアーカイバーは、macOS/Linux は OS が提供するものをそのまま利用し（再配布なし）、Windows は zlib のソースをビルド時に取得してコアへ静的リンクします（動的ライブラリとしての再配布はなし）。
+| Component | License |
+| --- | --- |
+| [eX1turboZ](https://takeda-toshiya.my.coocan.jp/common/index.html) | GPL-2.0-or-later |
+| [SDL2](https://github.com/libsdl-org/SDL) | zlib License |
+| [GTK3](https://www.gtk.org/) | LGPL-2.1-or-later |
