@@ -26,6 +26,9 @@ BubiX1turboZ は、[Common Source Code Project](https://takeda-toshiya.my.coocan
 
 エミュレーションコアは C++ のまま手を入れず、その上のアプリケーション層を [Nim](https://nim-lang.org/) で書き起こしています。
 
+<p align="center"><img src="docs/Screenshot.png" alt="琥珀色の遺言 on BubiX1turboZ running on macOS Tahoe"></p>
+
+
 ## About
 
 - **C++ コア + Nim アプリケーション層の二層構成**
