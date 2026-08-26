@@ -118,6 +118,7 @@ private:
 	int get_zpal_num(uint32_t addr, uint32_t data);
 	void update_zpalette();
 	scrntype_t get_zpriority(uint8_t text, uint16_t cg0, uint16_t cg1);
+	void reset_zpalette();
 #endif
 	
 	// kanji rom (from X1EMU by KM)

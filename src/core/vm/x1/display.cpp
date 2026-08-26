@@ -82,23 +82,7 @@ void DISPLAY::initialize()
 		palette_pc[i + 8] = RGB_COLOR((i & 2) ? 255 : 0, (i & 4) ? 255 : 0, (i & 1) ? 255 : 0);	// cg
 	}
 #ifdef _X1TURBOZ
-	for(int i = 0; i < 8; i++) {
-		ztpal[i] = ((i & 1) ? 0x03 : 0) | ((i & 2) ? 0x0c : 0) | ((i & 4) ? 0x30 : 0);
-		zpalette_tmp[i    ] = RGB_COLOR((i & 2) ? 255 : 0, (i & 4) ? 255 : 0, (i & 1) ? 255 : 0);	// text
-		zpalette_tmp[i + 8] = RGB_COLOR((i & 2) ? 255 : 0, (i & 4) ? 255 : 0, (i & 1) ? 255 : 0);	// digital
-	}
-	for(int g = 0; g < 16; g++) {
-		for(int r = 0; r < 16; r++) {
-			for(int b = 0; b < 16; b++) {
-				int num = b + r * 16 + g * 256;
-				zpal[num].b = b;
-				zpal[num].r = r;
-				zpal[num].g = g;
-				zpalette_tmp[num + 16] = RGB_COLOR((r * 255) / 15, (g * 255) / 15, (b * 255) / 15);
-			}
-		}
-	}
-	zpalette_changed = true;
+	reset_zpalette();
 #endif
 	
 	// initialize regs
@@ -144,6 +128,13 @@ void DISPLAY::reset()
 	zscroll = 0;
 	zmode2 = 0;
 	zpal_num = 0;
+	// A prior title may have left the ASIC palette RAM (zpal[]) holding
+	// arbitrary colours. Anything that reads zpalette_pc[8..15] - the 8
+	// colour fold used by every title regardless of AEN, see
+	// get_zpal_num()'s comment - depends on the eight zpal[] corners
+	// still being the identity ramp, so a reset must restore it rather
+	// than leaving the previous title's writes in place.
+	reset_zpalette();
 #endif
 	cur_line = cur_code = 0;
 	vblank_clock = 0;
@@ -402,7 +393,7 @@ uint32_t DISPLAY::read_io8(uint32_t addr)
 	case 0x1600:
 		get_cur_pcg(addr);
 		return pcg_r[cur_code][cur_line];
-	// –{—ˆ‚Í1400H‚Æ1700H‚Í“¯ˆê‹@”\‚È‚Ì‚¾‚ª...
+	// ï¿½{ï¿½ï¿½ï¿½ï¿½1400Hï¿½ï¿½1700Hï¿½Í“ï¿½ï¿½ï¿½@ï¿½\ï¿½È‚Ì‚ï¿½ï¿½ï¿½...
 	case 0x1700:
 		get_cur_pcg(addr);
 		return pcg_g[cur_code][cur_line];
@@ -743,7 +734,7 @@ void DISPLAY::get_cur_code_line()
 	cur_line = (vt_line % ch_height);
 #ifdef _X1TURBO_FEATURE
 	uint8_t knj = vram_k[addr & 0x7ff];
-	// –{—ˆ‚ÍŠ¿ŽšFONT‚â16dorANK‚à“Ç‚ß‚é‚Ì‚¾‚ª...
+	// ï¿½{ï¿½ï¿½ï¿½ÍŠï¿½ï¿½ï¿½FONTï¿½ï¿½16dorANKï¿½ï¿½ï¿½Ç‚ß‚ï¿½Ì‚ï¿½ï¿½ï¿½...
 	if(knj & 0x80) {
 		cur_code = (cur_code & 0xfe) | (cur_line & 1);
 	}
@@ -1112,8 +1103,8 @@ void DISPLAY::draw_text(int yy)
 #ifdef _X1TURBO_FEATURE
 			// underline mode, mask & draw
 			if (ksen_blank) {
-				// ƒAƒ“ƒ_[ƒ‰ƒ“‚É‚ÍAƒOƒ‰ƒtƒBƒbƒN‚Ì palette 1 ‚ÌF‚ª•\Ž¦‚³‚ê‚é
-				// ‰¼’l‚ðƒZƒbƒg‚µ‚ÄAcg_draw()‚ÅŽQÆ‚µ‚ÄƒOƒ‰ƒtƒBƒbƒN‚É’uŠ·‚·‚é
+				// ï¿½Aï¿½ï¿½ï¿½_ï¿½[ï¿½ï¿½ï¿½ï¿½ï¿½É‚ÍAï¿½Oï¿½ï¿½ï¿½tï¿½Bï¿½bï¿½Nï¿½ï¿½ palette 1 ï¿½ÌFï¿½ï¿½ï¿½\ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+				// ï¿½ï¿½ï¿½lï¿½ï¿½ï¿½Zï¿½bï¿½gï¿½ï¿½ï¿½ÄAcg_draw()ï¿½ÅŽQï¿½Æ‚ï¿½ï¿½ÄƒOï¿½ï¿½ï¿½tï¿½Bï¿½bï¿½Nï¿½É’uï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 				d[0] = d[1] = d[2] = d[3] = d[4] = d[5] = d[6] = d[7] = (ksen_line && (knj & 0x20)) ? 8 : 0;
 			} else 
 #endif
@@ -1209,15 +1200,15 @@ void DISPLAY::draw_cg(int line, int plane)
 		int ofs_r1 = column40 ? (ofs_r0 ^ 0x400) : hireso ? ofs_r0 : (ofs_r0 + 0xc000);
 		int ofs_g1 = column40 ? (ofs_g0 ^ 0x400) : hireso ? ofs_g0 : (ofs_g0 + 0xc000);
 		
-		// ƒAƒiƒƒOƒ‚[ƒhŽž‚ÌKSEN‚É‚Ç‚ÌF‚ª‚Â‚­‚©‚Í–¢’²¸AB=1111b‚Æ‰¼’è
+		// ï¿½Aï¿½iï¿½ï¿½ï¿½Oï¿½ï¿½ï¿½[ï¿½hï¿½ï¿½ï¿½ï¿½KSENï¿½É‚Ç‚ÌFï¿½ï¿½ï¿½Â‚ï¿½ï¿½ï¿½ï¿½Í–ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½AB=1111bï¿½Æ‰ï¿½ï¿½ï¿½
 		if(KSEN_EN) {
 			int underline_raster = FONT16_EN ? 18 : 9;
 			if(l == underline_raster) {
 				uint16_t* d = &zcg[plane][line][0];
-				uint8_t* t = &text[line][0]; // underline‚Ì—L–³‚ðtext[]‚©‚çE‚Á‚ÄˆÚ‚·
+				uint8_t* t = &text[line][0]; // underlineï¿½Ì—Lï¿½ï¿½ï¿½ï¿½text[]ï¿½ï¿½ï¿½ï¿½Eï¿½ï¿½ï¿½ÄˆÚ‚ï¿½
 				for(int x = 0; x < hz_disp && x < width; x++) {
 					if(t[0] != 0) {
-						// ƒeƒLƒXƒg‚Ì‰¼KSEN‚©‚çƒOƒ‰ƒtƒBƒbƒN‚ÉˆÚ‚·
+						// ï¿½eï¿½Lï¿½Xï¿½gï¿½Ì‰ï¿½KSENï¿½ï¿½ï¿½ï¿½Oï¿½ï¿½ï¿½tï¿½Bï¿½bï¿½Nï¿½ÉˆÚ‚ï¿½
 						d[0] = d[1] = d[2] = d[3] = d[4] = d[5] = d[6] = d[7] = 3 << 2;
 						t[0] = t[1] = t[2] = t[3] = t[4] = t[5] = t[6] = t[7] = 0;
 					} else {
@@ -1256,8 +1247,8 @@ void DISPLAY::draw_cg(int line, int plane)
 			}
 		}
 #if 1
-		// zpriority‚Åˆ—‚·‚é‚ÆAƒvƒŒ[ƒ“‚ÌŽæ“¾‚É’x‰„‚ª‚Å‚é‚Ì‚Å
-		// ‚±‚±‚Å‚Qƒrƒbƒg‰º‚ÖˆÚ“®‚µ‚Ä‚µ‚Ü‚¨‚¤
+		// zpriorityï¿½Åï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ÆAï¿½vï¿½ï¿½ï¿½[ï¿½ï¿½ï¿½ÌŽæ“¾ï¿½É’xï¿½ï¿½ï¿½ï¿½ï¿½Å‚ï¿½Ì‚ï¿½
+		// ï¿½ï¿½ï¿½ï¿½ï¿½Å‚Qï¿½rï¿½bï¿½gï¿½ï¿½ï¿½ÖˆÚ“ï¿½ï¿½ï¿½ï¿½Ä‚ï¿½ï¿½Ü‚ï¿½ï¿½ï¿½
 		if(!hireso && column40 && C64 && page) {
 			for(int x = 0; x < hz_disp && x < width; x++) {
 				uint16_t* d = &zcg[plane][line][x << 3];
@@ -1291,10 +1282,10 @@ void DISPLAY::draw_cg(int line, int plane)
 			int underline_raster = FONT16_EN ? 18 : 9;
 			if(l == underline_raster) {
 				uint8_t* d = &cg[line][0];
-				uint8_t* t = &text[line][0]; // underline‚Ì—L–³‚ðtext[]‚©‚çE‚Á‚ÄˆÚ‚·
+				uint8_t* t = &text[line][0]; // underlineï¿½Ì—Lï¿½ï¿½ï¿½ï¿½text[]ï¿½ï¿½ï¿½ï¿½Eï¿½ï¿½ï¿½ÄˆÚ‚ï¿½
 				for(int x = 0; x < hz_disp && x < width; x++) {
 					if(t[0] != 0) {
-						// ƒeƒLƒXƒg‚Ì‰¼KSEN‚©‚çƒOƒ‰ƒtƒBƒbƒN‚ÉˆÚ‚·
+						// ï¿½eï¿½Lï¿½Xï¿½gï¿½Ì‰ï¿½KSENï¿½ï¿½ï¿½ï¿½Oï¿½ï¿½ï¿½tï¿½Bï¿½bï¿½Nï¿½ÉˆÚ‚ï¿½
 						d[0] = d[1] = d[2] = d[3] = d[4] = d[5] = d[6] = d[7] = 1;
 						t[0] = t[1] = t[2] = t[3] = t[4] = t[5] = t[6] = t[7] = 0;
 					} else {
@@ -1332,6 +1323,27 @@ void DISPLAY::draw_cg(int line, int plane)
 }
 
 #ifdef _X1TURBOZ
+void DISPLAY::reset_zpalette()
+{
+	for(int i = 0; i < 8; i++) {
+		ztpal[i] = ((i & 1) ? 0x03 : 0) | ((i & 2) ? 0x0c : 0) | ((i & 4) ? 0x30 : 0);
+		zpalette_tmp[i    ] = RGB_COLOR((i & 2) ? 255 : 0, (i & 4) ? 255 : 0, (i & 1) ? 255 : 0);	// text
+		zpalette_tmp[i + 8] = RGB_COLOR((i & 2) ? 255 : 0, (i & 4) ? 255 : 0, (i & 1) ? 255 : 0);	// digital
+	}
+	for(int g = 0; g < 16; g++) {
+		for(int r = 0; r < 16; r++) {
+			for(int b = 0; b < 16; b++) {
+				int num = b + r * 16 + g * 256;
+				zpal[num].b = b;
+				zpal[num].r = r;
+				zpal[num].g = g;
+				zpalette_tmp[num + 16] = RGB_COLOR((r * 255) / 15, (g * 255) / 15, (b * 255) / 15);
+			}
+		}
+	}
+	zpalette_changed = true;
+}
+
 int DISPLAY::get_zpal_num(uint32_t addr, uint32_t data)
 {
 	int num = ((data >> 4) & 0x0f) | ((addr << 4) & 0xff0);
