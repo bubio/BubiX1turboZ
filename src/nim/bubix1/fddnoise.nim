@@ -21,6 +21,7 @@
 ## ones back on the next launch.
 
 import std/[math, os]
+import ./applog
 
 const
   SampleRate = 22050
@@ -161,4 +162,4 @@ proc ensureFiles*(dir: string) =
     try:
       writeWav(dir / name, toPcm(samples, gain))
     except CatchableError as e:
-      stderr.writeLine "bubix1turboz: could not generate " & name & ": " & e.msg
+      applog.note "could not generate " & name & ": " & e.msg

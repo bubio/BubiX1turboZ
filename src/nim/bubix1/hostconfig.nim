@@ -12,6 +12,7 @@
 ## downgrade.
 
 import std/[os, strutils, tables]
+import ./applog
 
 type
   HostConfig* = object
@@ -43,7 +44,7 @@ proc save*(path: string, cfg: HostConfig) =
   try:
     writeFile(path, lines.join("\n") & "\n")
   except IOError as e:
-    stderr.writeLine "bubix1turboz: could not save host settings: " & e.msg
+    applog.note "could not save host settings: " & e.msg
 
 proc getBool*(cfg: HostConfig, key: string, fallback: bool): bool =
   let raw = cfg.values.getOrDefault(key, "")

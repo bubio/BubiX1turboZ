@@ -54,6 +54,7 @@ import sdl2
 import sdl2/audio
 import sdl2/gamecontroller
 import sdl2/joystick
+import bubix1/applog
 import bubix1/core
 import bubix1/keymap
 import bubix1/paths
@@ -328,7 +329,7 @@ proc emulationLoop() {.thread.} =
       delay(1)
 
 proc fail(msg: string) =
-  stderr.writeLine "bubix1turboz: " & msg
+  applog.note msg
   quit 1
 
 const IplRomFileName = "IPLROM.X1T"
@@ -355,7 +356,7 @@ proc reportMissingRom() =
   ## alert can offer to open it - it lives inside ~/Library, where the
   ## Finder gives no easy way to navigate by hand.
   let dir = paths.romsDir()
-  stderr.writeLine "bubix1turboz: " & IplRomFileName & " not found in " & dir
+  applog.note IplRomFileName & " not found in " & dir
   filedialog.missingRom(
     tr(msgBiosMissingTitle),
     trf(msgBiosMissingBody, IplRomFileName, dir),
@@ -736,12 +737,12 @@ proc main() =
     try:
       result = archive.resolveMedia(path)
     except archive.ArchiveToolMissingError as e:
-      stderr.writeLine "bubix1turboz: " & e.msg
+      applog.note e.msg
       filedialog.message(tr(msgArchiveFailedTitle),
                          trf(msgArchiveNoTool, path.extractFilename()))
       result = @[]
     except CatchableError as e:
-      stderr.writeLine "bubix1turboz: " & e.msg
+      applog.note e.msg
       filedialog.message(tr(msgArchiveFailedTitle),
                          trf(msgArchiveFailed, path.extractFilename()))
       result = @[]
@@ -2004,7 +2005,7 @@ proc main() =
   # comes back, the first question is which renderer was in use.
   var rendererInfo: RendererInfo
   if renderer.getRendererInfo(addr rendererInfo) == 0:
-    echo "renderer: ", $rendererInfo.name
+    applog.note "renderer: " & $rendererInfo.name
   let texture = renderer.createTexture(SDL_PIXELFORMAT_ARGB8888,
     SDL_TEXTUREACCESS_STREAMING, ScreenWidth, ScreenHeight)
   if texture == nil:
@@ -2050,7 +2051,7 @@ proc main() =
   audioDev = openAudioDevice(nil, 0.cint, addr desired, addr obtained, 0)
   if audioDev == 0:
     fail "SDL_OpenAudioDevice failed: " & $getError()
-  echo &"audio device opened at {obtained.freq}Hz (requested {soundRate}Hz)"
+  applog.note &"audio device opened at {obtained.freq}Hz (requested {soundRate}Hz)"
   pauseAudioDevice(audioDev, 0)
 
   # How much audio the pacing loop keeps queued. Derived from the latency
@@ -2076,7 +2077,7 @@ proc main() =
   # `ready == false` and every draw becomes a no-op, so the lamps still work.
   var font = ankfont.load(renderer, paths.romsDir())
   if not font.ready:
-    stderr.writeLine "bubix1turboz: no 8x8 font ROM in " & paths.romsDir() &
+    applog.note "no 8x8 font ROM in " & paths.romsDir() &
       "; status bar text disabled"
 
   var fpsDisplay = 0
@@ -2452,7 +2453,7 @@ proc main() =
       drawnFrames = 0
       lastFpsTicks = nowTicks
 
-  stderr.writeLine "bubix1turboz: main loop exited, saving and shutting down"
+  applog.note "main loop exited, saving and shutting down"
   # Before anything is written or freed: the emulation thread is still
   # inside the core, and `running` is what tells it to leave. It checks
   # that between frames, so this returns within a frame's worth of work.

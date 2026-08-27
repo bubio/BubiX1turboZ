@@ -4,6 +4,8 @@
 ## the standard error stream, so the application runs to completion
 ## instead of blocking on UI that is not there.
 
+import ../../applog
+
 proc earlyInit*() =
   discard
 
@@ -20,11 +22,11 @@ proc saveFile*(extensions, suggestedName, startDir: string): string = ""
 proc chooseFolder*(title, prompt, startDir: string): string = ""
 
 proc message*(title, body, okLabel: string) =
-  stderr.writeLine(title & ": " & body)
+  applog.note(title & ": " & body)
 
 proc missingRom*(title, body, folder, openLabel, quitLabel: string): bool =
   ## False means the folder was not revealed; the caller quits either way.
-  stderr.writeLine(title & ": " & body & " (" & folder & ")")
+  applog.note(title & ": " & body & " (" & folder & ")")
   false
 
 proc chooseDisk*(title: string, rows: openArray[string], initial: int,
