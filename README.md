@@ -105,22 +105,48 @@ ROMファイルの配置場所は以下になります（一度、アプリケ�
 ## ビルド方法
 ---
 
+いずれのプラットフォームも、Nimのバージョン管理に[mise](https://mise.jdx.dev/)を使います（Windowsのみ後述の専用スクリプトで完結するため不要です）。
+
 ### macOS
 
 ```shell
+mise trust
+mise plugins install nim https://github.com/asdf-community/asdf-nim
+mise install
+mise exec -- nimble install -d -y
 ./scripts/build_macos.sh --dmg
 ```
 
 ### Linux
 
 ```shell
-sudo apt install libsdl2-dev libgtk-3-dev zlib1g-dev imagemagick rpm
+sudo apt install libsdl2-dev libgtk-3-dev zlib1g-dev imagemagick desktop-file-utils rpm
+mise trust
+mise plugins install nim https://github.com/asdf-community/asdf-nim
+mise install
+mise exec -- nimble install -d -y
 ./scripts/build_linux.sh --appimage --deb --rpm
 ```
 
 ### Windows
 
+`.sh`スクリプトはbashで動くため、コマンドプロンプトやPowerShellではなく**Git Bash**（[Git for Windows](https://gitforwindows.org/)に同梱）から実行します。
+
+1. [Git for Windows](https://gitforwindows.org/)をインストールする。
+2. スタートメニューから「**Git Bash**」を開き、このリポジトリのフォルダに`cd`する。
+3. Git Bash上で以下を実行（Nim・MinGW-w64・SDL2・zlibは`mise`を使わず専用スクリプトで取得します）:
+
 ```shell
+./scripts/install_nim_windows.sh
+./scripts/fetch_mingw_windows.sh
+./scripts/fetch_sdl2_windows.sh
+./scripts/fetch_zlib_windows.sh
+
+. build/toolchain/nim-windows/env.sh
+. build/toolchain/mingw-windows/env.sh
+export PATH="$MINGW_BIN_DIR:$PATH"
+"$NIM_BIN_DIR/nimble.exe" install -d -y
+
 ./scripts/build_windows.sh
 ```
 
