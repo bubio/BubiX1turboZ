@@ -68,6 +68,7 @@ import bubix1/fddnoise
 import bubix1/savestate
 import bubix1/capture
 import bubix1/i18n
+import bubix1/romajikana
 # Everything that talks to the host's windowing system. These are the only
 # imports here with a platform behind them; see bubix1/ui/README.md.
 import bubix1/ui/nativemenu
@@ -1311,7 +1312,10 @@ proc main() =
     bx1SetDriveVmInOpecode(h, driveVmItem.checked.cint))
   nativemenu.setAction(romajiItem, proc () =
     romajiItem.checked = not romajiItem.checked
-    bx1SetRomajiToKana(h, romajiItem.checked.cint))
+    # Not bx1SetRomajiToKana on its own: the core also needs the markers
+    # that engage and release the guest's kana lock, in an order that has
+    # to be kept. See bubix1/romajikana.nim.
+    romajikana.setRomajiToKana(h, romajiItem.checked))
   syncCpuItems()
 
   # --- Disk menu ---
@@ -2436,8 +2440,18 @@ proc main() =
       # themselves, so Reset or NMI silently turns this off underneath the
       # menu. The original re-derives its checkmarks every time a menu is
       # opened; this timer serves the same purpose.
+      #
+      # More than the checkmark has to follow, though: Reset clears the
+      # guest's kana lock along with the flag (PSUB::reset), but NMI does
+      # not - VM::special_reset only pulses the CPU's NMI line, leaving
+      # PSUB untouched. Without the call below, NMI would leave the menu
+      # saying the conversion is off while the guest stays locked in kana,
+      # with nothing in the app able to release it.
       if romajiItemRef.tag != 0:
-        romajiItemRef.checked = bx1GetRomajiToKana(h) != 0
+        let romajiOn = bx1GetRomajiToKana(h) != 0
+        if romajiItemRef.checked and not romajiOn:
+          romajikana.setRomajiToKana(h, false)
+        romajiItemRef.checked = romajiOn
       # Rec Sound / Stop keep each other in step when clicked, but a
       # recording can also end on its own (a write that fails, e.g. a full
       # disk), so re-derive both from the recorder itself.

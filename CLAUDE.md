@@ -20,12 +20,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `scripts/make_icon.sh` — `assets/AppIcon.icon`（Icon Composer 文書。原画はその `Assets/` 内）と `assets/Assets.xcassets` から `assets/Assets.car` と `assets/AppIcon.icns` を再生成。この 2 つはコミット済みなのでビルドにも CI にも Xcode は要らない。アイコンかアクセントカラーを変えるときだけ実行（ビルドからは呼ばれない。要 Xcode）
 - `scripts/make_icon_windows.ps1` — 同じ原画から `assets/windows/app.ico` を再生成。`app.ico` はコミット済みなのでビルドからは呼ばれない
 - `scripts/apply_core_patches.sh [--check]` — `patches/` にある、vendored コア（`src/core/`）への修正パッチを適用する。**コアを上流から再取り込みしたら必ず実行すること**（再 vendor でパッチは黙って消える）。冪等。詳細は `patches/README.md`
+- `scripts/run_tests.sh [名前 ...]` — `tests/t*.nim`（ヘッドレステスト）をビルドして実行する。`build/libbubix1core.a` にリンクするが SDL には依存せず、ウィンドウも BIOS ROM も要らない。`build_core.sh` を先に実行しておくこと
 
 現時点の構成:
 
 | パス | 追跡 | 内容 |
 |---|---|---|
-| `CLAUDE.md`, `mise.toml`, `.gitignore`, `LICENSE`/`license/`, `README.md`, `*.nimble`, `src/`, `scripts/`, `assets/`, `.github/`, `docs/`（`docs/dev/` を含む） | ✅ | |
+| `CLAUDE.md`, `mise.toml`, `.gitignore`, `LICENSE`/`license/`, `README.md`, `*.nimble`, `src/`, `scripts/`, `tests/`, `assets/`, `.github/`, `docs/`（`docs/dev/` を含む） | ✅ | |
 | `docs/dev/` | ✅（submodule） | `dev-docs` リポジトリの `bubix1turboz` ブランチを指す git submodule。`BluePrint.md`（仕様）と `DevelopmentPlan.md`（計画・進捗・調査結果の一次資料）を含む |
 | `spike/` | ❌ | フェーズ 1 の検証コードと成果物（`src/` へ移設済みのものも含め、参照用にそのまま残置） |
 

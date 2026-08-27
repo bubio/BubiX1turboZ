@@ -148,7 +148,25 @@ void bx1_key_up(bx1_handle h, int vk_code);
 /// character; the core ignores it unless Romaji to Kana is on, and when
 /// that is on it is the ONLY path by which ordinary keys reach the guest
 /// (EMU::key_down stops forwarding them and feeds the auto key instead).
+///
+/// Two codes are markers rather than characters, and Romaji to Kana does
+/// not work without them (EMU::set_auto_key_char):
+///   1  start - presses the かな key unless the guest's kana lock is
+///      already on, so that the digit and letter keys the conversion
+///      sends arrive as kana rather than as digits and letters, and
+///      clears the half-typed romaji the core accumulates.
+///   0  end - flushes a pending trailing "n" as ン and presses the かな
+///      key again to release the lock.
+/// Send 1 when the option is switched on and 0 before switching it off
+/// (the core drops 0 once the option is already off).
 void bx1_key_char(bx1_handle h, int code);
+/// The guest's own Caps / Kana lock, which the X1's sub CPU toggles when
+/// it sees a press of VK_CAPITAL (0x14) / VK_KANA (0x15) and consults when
+/// it turns a key into a character. Note that these are the codes the sub
+/// CPU watches - not the 0xf2 the core's auto key sends for "kana", which
+/// no X1 device looks at.
+int bx1_get_caps_locked(bx1_handle h);
+int bx1_get_kana_locked(bx1_handle h);
 /// index: 0-3. status: bit N set means button N held (raw physical state;
 /// the core remaps this through config.joy_buttons before the VM sees it).
 void bx1_set_joy(bx1_handle h, int index, uint32_t status);
@@ -439,6 +457,32 @@ const char* bx1_get_sound_device_caption(int index);
 /// Volumes are in decibels, clamped by the core to [-40, 0].
 int bx1_get_volume_l(bx1_handle h, int device);
 int bx1_get_volume_r(bx1_handle h, int device);
+
+// ----------------------------------------------------------------------
+// Test hooks
+// ----------------------------------------------------------------------
+//
+// Used by the headless tests under tests/, not by the application. They
+// are part of the ordinary build rather than a separate one so that what
+// the tests exercise is the same library the app links against.
+
+/// Set on a captured entry that is a key release; the low byte is the VK
+/// code either way.
+#define BX1_KEY_CAPTURE_RELEASE 0x100
+
+/// Starts (or restarts, discarding whatever was logged) recording every
+/// key event the VM is handed - both the ones the host injects through
+/// bx1_key_down/bx1_key_up and the ones the auto key synthesizes on its
+/// own, which is what makes a romaji-to-kana conversion observable
+/// without a screen. Recording stays on for the life of the handle.
+void bx1_key_capture_start(bx1_handle h);
+/// Drains up to `max_entries` recorded events into `dst` and empties the
+/// log, so consecutive calls see only what happened between them. Returns
+/// the number of entries written. `dropped`, when not NULL, receives the
+/// number of events since the last call that did not fit - in the log, or
+/// in `dst`; a caller that cares about a complete sequence must treat a
+/// non-zero value as a failure rather than compare a truncated prefix.
+int bx1_key_capture_read(bx1_handle h, uint16_t* dst, int max_entries, int* dropped);
 
 #ifdef __cplusplus
 }

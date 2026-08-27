@@ -12,6 +12,9 @@
 #include <atomic>
 
 #include "../core/emu.h"
+// For the key capture test hook at the bottom of this file; EMU keeps its
+// own OSD privately, so the bridge reaches the hook as a static instead.
+#include "../core/sdl/osd.h"
 #include "../core/config.h"
 #include "../core/common.h"
 // For MEDIA_TYPE_* (the D88 header's own media byte), used by
@@ -309,6 +312,18 @@ void bx1_key_char(bx1_handle h, int code)
 {
 	vm_lock guard(h);
 	emu_of(h)->key_char((char)code);
+}
+
+int bx1_get_caps_locked(bx1_handle h)
+{
+	vm_lock guard(h);
+	return emu_of(h)->get_caps_locked() ? 1 : 0;
+}
+
+int bx1_get_kana_locked(bx1_handle h)
+{
+	vm_lock guard(h);
+	return emu_of(h)->get_kana_locked() ? 1 : 0;
 }
 
 void bx1_set_joy(bx1_handle h, int index, uint32_t status)
@@ -1077,4 +1092,33 @@ int bx1_get_volume_r(bx1_handle h, int device)
 		return 0;
 	}
 	return config.sound_volume_r[device];
+}
+
+// ----------------------------------------------------------------------------
+// Test hooks
+// ----------------------------------------------------------------------------
+
+// The header cannot include osd.h (it is a C header, and the OSD is C++),
+// so the two spellings of the release bit are checked against each other
+// here instead of one being defined in terms of the other.
+static_assert((uint16_t)BX1_KEY_CAPTURE_RELEASE == OSD::KEY_CAPTURE_RELEASE,
+              "BX1_KEY_CAPTURE_RELEASE and OSD::KEY_CAPTURE_RELEASE disagree");
+
+// Both of these take the VM lock like their neighbours: key events reach
+// OSD::key_change from the application's thread (bx1_key_down) and from
+// the emulation thread (the auto key, inside bx1_run_frame), and the log
+// they share has no lock of its own.
+void bx1_key_capture_start(bx1_handle h)
+{
+	vm_lock guard(h);
+	OSD::start_key_capture();
+}
+
+int bx1_key_capture_read(bx1_handle h, uint16_t* dst, int max_entries, int* dropped)
+{
+	vm_lock guard(h);
+	if(dst == NULL || max_entries <= 0) {
+		return 0;
+	}
+	return OSD::read_key_capture(dst, max_entries, dropped);
 }

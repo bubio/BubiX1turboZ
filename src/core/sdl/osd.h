@@ -168,6 +168,16 @@ public:
 	{
 		lost_focus = true;
 	}
+	// Test hook: a log of the key events actually handed to the VM, which
+	// is what the headless tests under tests/ assert on - see
+	// key_change() in osd_input.cpp for the recorded form. Static because
+	// there is one machine, and the bridge reaches this without holding an
+	// OSD instance (EMU keeps its own privately).
+	//
+	// Each entry is the VK code, with this bit set on a release.
+	static const uint16_t KEY_CAPTURE_RELEASE = 0x100;
+	static void start_key_capture();
+	static int read_key_capture(uint16_t* dst, int max_entries, int* dropped);
 #ifdef USE_MOUSE
 	void enable_mouse();
 	void disable_mouse();

@@ -75,6 +75,8 @@ proc bx1KeyDown*(h: Bx1Handle, vkCode: cint, repeat: cint)
   {.importc: "bx1_key_down", bx1.}
 proc bx1KeyUp*(h: Bx1Handle, vkCode: cint) {.importc: "bx1_key_up", bx1.}
 proc bx1KeyChar*(h: Bx1Handle, code: cint) {.importc: "bx1_key_char", bx1.}
+proc bx1GetCapsLocked*(h: Bx1Handle): cint {.importc: "bx1_get_caps_locked", bx1.}
+proc bx1GetKanaLocked*(h: Bx1Handle): cint {.importc: "bx1_get_kana_locked", bx1.}
 proc bx1SetJoy*(h: Bx1Handle, index: cint, status: uint32)
   {.importc: "bx1_set_joy", bx1.}
 proc bx1SetMouse*(h: Bx1Handle, dx, dy, buttons: cint)
@@ -213,3 +215,13 @@ proc bx1GetSoundDeviceCaption*(index: cint): cstring
   {.importc: "bx1_get_sound_device_caption", bx1.}
 proc bx1GetVolumeL*(h: Bx1Handle, device: cint): cint {.importc: "bx1_get_volume_l", bx1.}
 proc bx1GetVolumeR*(h: Bx1Handle, device: cint): cint {.importc: "bx1_get_volume_r", bx1.}
+
+const bx1KeyCaptureRelease* = 0x100'u16
+  ## Set on a captured entry that is a key release; the low byte is the VK
+  ## code either way. Mirrors `BX1_KEY_CAPTURE_RELEASE`, which the bridge
+  ## itself checks against the core's own spelling with a `static_assert`.
+
+proc bx1KeyCaptureStart*(h: Bx1Handle) {.importc: "bx1_key_capture_start", bx1.}
+proc bx1KeyCaptureRead*(h: Bx1Handle, dst: ptr uint16, maxEntries: cint,
+                        dropped: ptr cint): cint
+  {.importc: "bx1_key_capture_read", bx1.}
