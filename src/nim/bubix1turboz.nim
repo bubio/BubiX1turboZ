@@ -17,7 +17,7 @@
 ## SDL2 owns the application object, the event pump and the emulation
 ## surface; everything the host platform draws around it - the menu bar,
 ## the file dialogs, the volume panel, the save-state picker - is built as
-## plain AppKit objects under `bubix1/`. Phase 1.2's 案 B put a GUI library
+## plain AppKit objects under `bubix1/`. Phase 1.2's "option B" put a GUI library
 ## (uing/libui-ng) between this file and AppKit for the menu bar and the
 ## volume panel, but every other piece of UI had already had to go around
 ## it, and what remained was paid for with a hidden placeholder window and
@@ -83,7 +83,7 @@ const
   # behind (or below) the main emulator window - confirmed the hard way
   # when a first attempt at this placed the window at (0, 1308) on a
   # tall display and nobody noticed it. Drawing the lamps into a strip
-  # at the bottom of the emulator's own window is what "ステータスバー"
+  # at the bottom of the emulator's own window is what a "status bar"
   # means on macOS anyway: part of the one window, not a second one.
   StatusBarHeight = 24
   WindowHeight = ScreenHeight + StatusBarHeight

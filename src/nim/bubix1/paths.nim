@@ -1,10 +1,10 @@
 ## Platform-conventional storage locations for BubiX1turboZ.
 ##
-## Nothing is ever written next to the executable (BluePrint: "実行ファイル
-## と同じ場所に置くのはNG"). Everything this app owns lives under one base
-## directory per platform, named by `appDataDir` below, and the two folders
-## that hold things the *user* goes looking for (recordings, screenshots)
-## sit in the host's own Music and Pictures folders instead.
+## Nothing is ever written next to the executable (BluePrint: placing files
+## alongside the executable is not allowed). Everything this app owns lives
+## under one base directory per platform, named by `appDataDir` below, and
+## the two folders that hold things the *user* goes looking for (recordings,
+## screenshots) sit in the host's own Music and Pictures folders instead.
 ##
 ## This module is host-dependent but not user interface, so it stays out of
 ## `ui/` - it needs no backend, only the right branch. It is the one place
@@ -56,7 +56,7 @@ when defined(windows):
 proc appDataDir*(): string =
   ## The single base directory. One directory rather than the config/data
   ## split XDG would suggest, because 7z and zip archives are expanded
-  ## "設定ファイルと同じフォルダ" (CLAUDE.md, following Bubilator88) - and
+  ## "the same folder as the config file" (CLAUDE.md, following Bubilator88) - and
   ## since ROMs, save states and expanded archives are what dominate it,
   ## the data location is the one it is placed at.
   when defined(macosx):
@@ -106,7 +106,7 @@ proc configFilePath*(): string =
   appDataDir() / "config.ini"
 
 proc recentFilesPath*(): string =
-  ## Not part of the core's own config_t (its recent_*_path fields are
+  ## Not part of the core's own `config_t` (its `recent_*_path` fields are
   ## never populated by this vendored tree - see the phase 6 notes in
   ## docs/dev/DevelopmentPlan.md). Tracked separately, one path per line.
   appDataDir() / "recent.txt"

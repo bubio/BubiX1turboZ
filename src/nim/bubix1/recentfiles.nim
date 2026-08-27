@@ -1,7 +1,7 @@
 ## Tracks recently-opened media paths for the File menu's "Recent Files"
 ## submenu.
 ##
-## Not backed by the core's own config_t.recent_*_path fields - those are
+## Not backed by the core's own `config_t.recent_*_path` fields - those are
 ## declared but never populated by this vendored tree (see
 ## docs/dev/DevelopmentPlan.md phase 6). This keeps its own flat text
 ## file instead, one path per line, most recent first.
