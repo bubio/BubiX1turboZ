@@ -113,12 +113,12 @@ proc runModalLoop*(isDone: proc (): bool) =
     discard translateMessage(addr msg)
     discard dispatchMessageW(addr msg)
 
-proc menuHeight*(): int32 =
-  ## The height a single-row menu bar adds above the client area, so
-  ## `hostwindow.setSize` can size the whole window to fit a picture of a
-  ## given size below it - the same job Linux's setSize does by reading the
-  ## GTK menu bar's allocated height, except Windows has no widget to
-  ## measure: SM_CYMENU is the standard metric for a default, single-line
-  ## menu. A caption long enough to wrap the bar to a second row is not
-  ## accounted for; this app's menu never gets that long.
-  if menuBar != nil: getSystemMetrics(SmCymenu) else: 0'i32
+# No menu-height helper lives here, deliberately. Nothing on this backend has
+# to measure the bar: SDL_SetWindowSize sizes the client area and allows for
+# an attached menu itself, and hostwindow.present restores the startup size
+# by handing SDL back a rectangle it measured (see its own comments). An
+# SM_CYMENU-based helper used to exist and was the source of a bug - it was
+# added to hostwindow.setSize on top of the adjustment SDL was already
+# making, which left the client area one menu bar too tall after every
+# window-scale change; it also under-reports the real bar on a scaled
+# display, GetSystemMetrics not being DPI-aware.

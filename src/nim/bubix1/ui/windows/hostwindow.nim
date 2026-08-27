@@ -37,13 +37,43 @@ proc present*(win: WindowPtr, x, y: cint, restorePos: bool) =
   # building the HMENU with no window to attach it to yet; this is the
   # first point a real HWND exists to give it to.
   if winshell.menuBar != nil:
+    # The client area SDL sized to fit the picture, captured before the menu
+    # can take a slice out of it. SetMenu does not grow the window to keep
+    # that area: it makes room for the bar out of the client rect instead
+    # (confirmed empirically - GetClientRect read straight after SetMenu
+    # comes back one menu bar short of what SDL_CreateWindow was asked for).
+    # Left uncorrected, every frame stretches the guest picture into a client
+    # area a few percent shorter than intended, which a nearest-neighbour
+    # scale turns into unevenly doubled and dropped rows.
+    var wanted: win32.Rect
+    discard getClientRect(winshell.mainHwnd, addr wanted)
     discard setMenu(winshell.mainHwnd, winshell.menuBar)
+    # Asking SDL for that same client size again is what restores it:
+    # SDL_SetWindowSize sizes the *client* area and re-reads GetMenu on every
+    # call, so unlike the size SDL_CreateWindow was given, it does allow for
+    # the bar. Handing it back the measured rectangle - rather than the
+    # shrunken one plus a menu height from GetSystemMetrics - keeps this
+    # independent of how tall the bar actually turned out to be, which
+    # SM_CYMENU does not report correctly on a scaled display (it is not
+    # DPI-aware, and assets/windows/app.manifest asks for PerMonitorV2).
+    sdl2.setSize(win, (wanted.right - wanted.left).cint,
+                 (wanted.bottom - wanted.top).cint)
   if restorePos:
     sdl2.setPosition(win, x, y)
   win.showWindow()
 
 proc setSize*(win: WindowPtr, width, height: cint) =
-  sdl2.setSize(win, width, height + winshell.menuHeight().cint)
+  ## `height` reaches SDL unadjusted, menu bar or not: SDL_SetWindowSize
+  ## sizes the client area and already allows for an attached menu, which it
+  ## looks up (GetMenu) on every call - so it stays right across the
+  ## setFullscreen below detaching and re-attaching the bar.
+  ##
+  ## Adding a menu height here as well was a bug: it made the client area one
+  ## menu bar too tall on every window-scale change, so 400 guest rows were
+  ## stretched over 420 or 820 and the extra rows landed as an uneven scatter
+  ## of doubled scanlines. The window was correct until the first such change
+  ## because present() above is what sizes it at startup.
+  sdl2.setSize(win, width, height)
 
 proc setFullscreen*(win: WindowPtr, on: bool) =
   # The menu bar is hidden rather than left in place: it would otherwise
