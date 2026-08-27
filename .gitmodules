@@ -1,0 +1,4 @@
+[submodule "docs/dev"]
+	path = docs/dev
+	url = git@github.com:bubio/dev-docs.git
+	branch = bubix1turboz

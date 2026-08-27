@@ -21,8 +21,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | パス | 追跡 | 内容 |
 |---|---|---|
-| `CLAUDE.md`, `mise.toml`, `.gitignore`, `LICENSE`/`license/`, `README.md`, `*.nimble`, `src/`, `scripts/`, `assets/`, `.github/`, `docs/`（`docs/dev/` を除く） | ✅ | |
-| `docs/dev/` | ❌ | `BluePrint.md`（仕様）と `DevelopmentPlan.md`（計画・進捗・調査結果の一次資料） |
+| `CLAUDE.md`, `mise.toml`, `.gitignore`, `LICENSE`/`license/`, `README.md`, `*.nimble`, `src/`, `scripts/`, `assets/`, `.github/`, `docs/`（`docs/dev/` を含む） | ✅ | |
+| `docs/dev/` | ✅（submodule） | `dev-docs` リポジトリの `bubix1turboz` ブランチを指す git submodule。`BluePrint.md`（仕様）と `DevelopmentPlan.md`（計画・進捗・調査結果の一次資料）を含む |
 | `spike/` | ❌ | フェーズ 1 の検証コードと成果物（`src/` へ移設済みのものも含め、参照用にそのまま残置） |
 
 各フェーズで確定した設計判断・不具合と対処・申し送り事項は `docs/dev/DevelopmentPlan.md` に集約されている。**作業前に必ずこれを読み、同じ調査や設計判断をやり直さないこと。**
@@ -80,8 +80,8 @@ Sharp X1 turbo Z のマルチプラットフォーム対応エミュレーター
 ## Git 運用
 
 - **コミット・プッシュは指示があるまで行わない。**
-- `docs/dev/` 配下の開発途中の技術ドキュメント（`BluePrint.md` を含む）は **Git の追跡対象外**にする。
-- ユーザー向けの操作マニュアルは `docs/` 直下に作成し、追跡対象にする。
+- `docs/dev/` は `dev-docs` リポジトリ（`~/dev/_Emu/dev-docs`）の `bubix1turboz` ブランチを指す git submodule。開発途中の技術ドキュメント（`BluePrint.md` を含む）はこのブランチにのみコミットする。`dev-docs` の `main` ブランチには触れない。
+- ユーザー向けの操作マニュアルは（submodule ではない）`docs/` 直下に作成し、本リポジトリの追跡対象にする。
 
 ## CI/CD
 

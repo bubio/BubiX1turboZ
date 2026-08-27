@@ -1,5 +1,5 @@
-# Development-only documents and spikes (see CLAUDE.md)
-docs/dev/
+# Development-only spikes (see CLAUDE.md)
+# docs/dev is a git submodule (dev-docs repo), tracked separately.
 spike/
 
 # Build artifacts
