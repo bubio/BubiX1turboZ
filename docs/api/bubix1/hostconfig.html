@@ -55,6 +55,9 @@
     </div>
     <ul class="simple simple-toc" id="toc-list">
   <li>
+  <a class="reference reference-toplevel" href="#6" id="56">Imports</a>
+</li>
+<li>
   <details open>
     <summary><a class="reference reference-toplevel" href="#7" id="57">Types</a></summary>
     <ul class="simple simple-toc-section">
@@ -115,7 +118,13 @@
 <p>Almost everything the menus change lives in the core's own <tt class="docutils literal"><span class="pre"><span class="Identifier">config</span></span></tt> struct and round-trips through its config.ini. A few settings do not: <tt class="docutils literal"><span class="pre"><span class="Identifier">config</span><span class="Operator">.</span><span class="Identifier">show_status_bar</span></span></tt>, for instance, is declared inside <tt class="docutils literal"><span class="pre"><span class="Comment">#if defined(_WIN32)</span></span></tt> in src/core/config.h, so it does not exist in this build at all. Rather than patch the vendored core for one boolean, those settings live here, in a small INI-style file beside config.ini.</p>
 <p>Format is deliberately trivial - <tt class="docutils literal"><span class="pre"><span class="Identifier">Key</span><span class="Operator">=</span><span class="Identifier">Value</span></span></tt> per line, <tt class="docutils literal"><span class="pre"><span class="Comment">#</span></span></tt> comments, unknown keys preserved on save so a newer build's settings survive a downgrade.</p>
 </p>
-    <div class="section" id="7">
+    <div class="section" id="6">
+  <h1><a class="toc-backref" href="#6">Imports</a></h1>
+  <dl class="item">
+    <a class="reference external" href="applog.html">applog</a>
+  </dl>
+</div>
+<div class="section" id="7">
   <h1><a class="toc-backref" href="#7">Types</a></h1>
   <dl class="item">
     <div id="HostConfig">
@@ -185,8 +194,8 @@
 </div>
 <div id="save-procs-all">
   <div id="save,string,HostConfig">
-  <dt><pre><span class="Keyword">proc</span> <a href="#save%2Cstring%2CHostConfig"><span class="Identifier">save</span></a><span class="Other">(</span><span class="Identifier">path</span><span class="Other">:</span> <span class="Identifier">string</span><span class="Other">;</span> <span class="Identifier">cfg</span><span class="Other">:</span> <a href="#HostConfig"><span class="Identifier">HostConfig</span></a><span class="Other">)</span> {.<span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Identifier">IOError</span><span class="Other">]</span><span class="Other">,</span>
-    <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Identifier">WriteIOEffect</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
+  <dt><pre><span class="Keyword">proc</span> <a href="#save%2Cstring%2CHostConfig"><span class="Identifier">save</span></a><span class="Other">(</span><span class="Identifier">path</span><span class="Other">:</span> <span class="Identifier">string</span><span class="Other">;</span> <span class="Identifier">cfg</span><span class="Other">:</span> <a href="#HostConfig"><span class="Identifier">HostConfig</span></a><span class="Other">)</span> {.<span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Identifier">WriteIOEffect</span><span class="Other">]</span><span class="Other">,</span>
+    <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
   <dd>
     
     
@@ -241,7 +250,7 @@
       <div class="twelve-columns footer">
         <span class="nim-sprite"></span>
         <br>
-        <small style="color: var(--hint);">Made with Nim. Generated: 2026-08-27 00:53:38 UTC</small>
+        <small style="color: var(--hint);">Made with Nim. Generated: 2026-08-28 01:19:15 UTC</small>
       </div>
     </div>
   </div>

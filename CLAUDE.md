@@ -21,6 +21,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `scripts/make_icon_windows.ps1` — 同じ原画から `assets/windows/app.ico` を再生成。`app.ico` はコミット済みなのでビルドからは呼ばれない
 - `scripts/apply_core_patches.sh [--check]` — `patches/` にある、vendored コア（`src/core/`）への修正パッチを適用する。**コアを上流から再取り込みしたら必ず実行すること**（再 vendor でパッチは黙って消える）。冪等。詳細は `patches/README.md`
 - `scripts/run_tests.sh [名前 ...]` — `tests/t*.nim`（ヘッドレステスト）をビルドして実行する。`build/libbubix1core.a` にリンクするが SDL には依存せず、ウィンドウも BIOS ROM も要らない。`build_core.sh` を先に実行しておくこと
+- `scripts/make_dep_graph.sh` — `docs/Architecture.md` と `docs/Architecture.en.md` の「Nim 側のモジュール依存グラフ」（4 枚）を再生成する。`nim genDepend` を 3 プラットフォーム分走らせて辺を合併し、Mermaid として出力する（Graphviz は不要）。**両ファイルの手書き部分（コア側のレイヤー図など）はマーカーの外にあり、上書きされない**
+- `scripts/make_api_docs.sh` — コミット済みの `docs/api/`（`nim doc` の出力）を再生成する。`src/nim/bubix1/ui/` はバックエンドを `when defined(...)` で選ぶので、`nim doc` を `--os:macosx` / `--os:linux` / `--os:windows` の 3 回走らせて結果をマージし、`nim buildIndex` で 3 プラットフォーム分の索引を作り直す。C コンパイラも SDL も GTK も要らないのでどのホストからでも実行できる
 
 現時点の構成:
 
@@ -86,7 +88,7 @@ Sharp X1 turbo Z のマルチプラットフォーム対応エミュレーター
 
 - **コミット・プッシュは指示があるまで行わない。**
 - `docs/dev/` は `dev-docs` リポジトリ（`~/dev/_Emu/dev-docs`）の `bubix1turboz` ブランチを指す git submodule。開発途中の技術ドキュメント（`BluePrint.md` を含む）はこのブランチにのみコミットする。`dev-docs` の `main` ブランチには触れない。
-- ユーザー向けの操作マニュアルは（submodule ではない）`docs/` 直下に作成し、本リポジトリの追跡対象にする。
+- 公開文書（操作マニュアル・アーキテクチャ解説など）は（submodule ではない）`docs/` 直下に作成し、本リポジトリの追跡対象にする。日本語版と `*.en.md` の英語版を対で置く（`UserManual.md` / `UserManual.en.md`、`Architecture.md` / `Architecture.en.md`）。
 
 ## CI/CD
 

@@ -69,6 +69,15 @@
 </li>
 <li>
   <details open>
+    <summary><a class="reference reference-toplevel" href="#10" id="60">Consts</a></summary>
+    <ul class="simple simple-toc-section">
+      <li><a class="reference" href="#bx1KeyCaptureRelease" title="bx1KeyCaptureRelease = 0x0100'u16">bx1KeyCaptureRelease</a></li>
+
+    </ul>
+  </details>
+</li>
+<li>
+  <details open>
     <summary><a class="reference reference-toplevel" href="#12" id="62">Procs</a></summary>
     <ul class="simple simple-toc-section">
       <ul class="simple nested-toc-section">bx1ApplyVolume
@@ -123,6 +132,10 @@
   <li><a class="reference" href="#bx1GetBufferedAudioFrames%2CBx1Handle" title="bx1GetBufferedAudioFrames(h: Bx1Handle): cint">bx1GetBufferedAudioFrames(h: Bx1Handle): cint</a></li>
 
 </ul>
+<ul class="simple nested-toc-section">bx1GetCapsLocked
+  <li><a class="reference" href="#bx1GetCapsLocked%2CBx1Handle" title="bx1GetCapsLocked(h: Bx1Handle): cint">bx1GetCapsLocked(h: Bx1Handle): cint</a></li>
+
+</ul>
 <ul class="simple nested-toc-section">bx1GetCorrectDiskTiming
   <li><a class="reference" href="#bx1GetCorrectDiskTiming%2CBx1Handle%2Ccint" title="bx1GetCorrectDiskTiming(h: Bx1Handle; drv: cint): cint">bx1GetCorrectDiskTiming(h: Bx1Handle; drv: cint): cint</a></li>
 
@@ -173,6 +186,10 @@
 </ul>
 <ul class="simple nested-toc-section">bx1GetIgnoreDiskCrc
   <li><a class="reference" href="#bx1GetIgnoreDiskCrc%2CBx1Handle%2Ccint" title="bx1GetIgnoreDiskCrc(h: Bx1Handle; drv: cint): cint">bx1GetIgnoreDiskCrc(h: Bx1Handle; drv: cint): cint</a></li>
+
+</ul>
+<ul class="simple nested-toc-section">bx1GetKanaLocked
+  <li><a class="reference" href="#bx1GetKanaLocked%2CBx1Handle" title="bx1GetKanaLocked(h: Bx1Handle): cint">bx1GetKanaLocked(h: Bx1Handle): cint</a></li>
 
 </ul>
 <ul class="simple nested-toc-section">bx1GetKeyboardType
@@ -293,6 +310,16 @@
 </ul>
 <ul class="simple nested-toc-section">bx1IsTapeInserted
   <li><a class="reference" href="#bx1IsTapeInserted%2CBx1Handle" title="bx1IsTapeInserted(h: Bx1Handle): cint">bx1IsTapeInserted(h: Bx1Handle): cint</a></li>
+
+</ul>
+<ul class="simple nested-toc-section">bx1KeyCaptureRead
+  <li><a class="reference" href="#bx1KeyCaptureRead%2CBx1Handle%2Cptr.uint16%2Ccint%2Cptr.cint" title="bx1KeyCaptureRead(h: Bx1Handle; dst: ptr uint16; maxEntries: cint;
+                  dropped: ptr cint): cint">bx1KeyCaptureRead(h: Bx1Handle; dst: ptr uint16; maxEntries: cint;
+                  dropped: ptr cint): cint</a></li>
+
+</ul>
+<ul class="simple nested-toc-section">bx1KeyCaptureStart
+  <li><a class="reference" href="#bx1KeyCaptureStart%2CBx1Handle" title="bx1KeyCaptureStart(h: Bx1Handle)">bx1KeyCaptureStart(h: Bx1Handle)</a></li>
 
 </ul>
 <ul class="simple nested-toc-section">bx1KeyChar
@@ -539,6 +566,20 @@
 
   </dl>
 </div>
+<div class="section" id="10">
+  <h1><a class="toc-backref" href="#10">Consts</a></h1>
+  <dl class="item">
+    <div id="bx1KeyCaptureRelease">
+  <dt><pre><a href="#bx1KeyCaptureRelease"><span class="Identifier">bx1KeyCaptureRelease</span></a> <span class="Other">=</span> <span class="DecNumber">0x0100'u16</span></pre></dt>
+  <dd>
+    
+    Set on a captured entry that is a key release; the low byte is the VK code either way. Mirrors <tt class="docutils literal"><span class="pre"><span class="Identifier">BX1_KEY_CAPTURE_RELEASE</span></span></tt>, which the bridge itself checks against the core's own spelling with a <tt class="docutils literal"><span class="pre"><span class="Identifier">static_assert</span></span></tt>.
+    
+  </dd>
+</div>
+
+  </dl>
+</div>
 <div class="section" id="12">
   <h1><a class="toc-backref" href="#12">Procs</a></h1>
   <dl class="item">
@@ -708,6 +749,18 @@
 </div>
 
 </div>
+<div id="bx1GetCapsLocked-procs-all">
+  <div id="bx1GetCapsLocked,Bx1Handle">
+  <dt><pre><span class="Keyword">proc</span> <a href="#bx1GetCapsLocked%2CBx1Handle"><span class="Identifier">bx1GetCapsLocked</span></a><span class="Other">(</span><span class="Identifier">h</span><span class="Other">:</span> <a href="#Bx1Handle"><span class="Identifier">Bx1Handle</span></a><span class="Other">)</span><span class="Other">:</span> <span class="Identifier">cint</span> {.<span class="Identifier">importc</span><span class="Other">:</span> <span class="StringLit">&quot;bx1_get_caps_locked&quot;</span><span class="Other">,</span>
+    <span class="Identifier">header</span><span class="Other">:</span> <span class="StringLit">&quot;bubix1_api.h&quot;</span><span class="Other">,</span> <span class="Identifier">cdecl</span><span class="Other">,</span> <span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
+  <dd>
+    
+    
+    
+  </dd>
+</div>
+
+</div>
 <div id="bx1GetCorrectDiskTiming-procs-all">
   <div id="bx1GetCorrectDiskTiming,Bx1Handle,cint">
   <dt><pre><span class="Keyword">proc</span> <a href="#bx1GetCorrectDiskTiming%2CBx1Handle%2Ccint"><span class="Identifier">bx1GetCorrectDiskTiming</span></a><span class="Other">(</span><span class="Identifier">h</span><span class="Other">:</span> <a href="#Bx1Handle"><span class="Identifier">Bx1Handle</span></a><span class="Other">;</span> <span class="Identifier">drv</span><span class="Other">:</span> <span class="Identifier">cint</span><span class="Other">)</span><span class="Other">:</span> <span class="Identifier">cint</span> {.
@@ -866,6 +919,18 @@
   <dt><pre><span class="Keyword">proc</span> <a href="#bx1GetIgnoreDiskCrc%2CBx1Handle%2Ccint"><span class="Identifier">bx1GetIgnoreDiskCrc</span></a><span class="Other">(</span><span class="Identifier">h</span><span class="Other">:</span> <a href="#Bx1Handle"><span class="Identifier">Bx1Handle</span></a><span class="Other">;</span> <span class="Identifier">drv</span><span class="Other">:</span> <span class="Identifier">cint</span><span class="Other">)</span><span class="Other">:</span> <span class="Identifier">cint</span> {.
     <span class="Identifier">importc</span><span class="Other">:</span> <span class="StringLit">&quot;bx1_get_ignore_disk_crc&quot;</span><span class="Other">,</span> <span class="Identifier">header</span><span class="Other">:</span> <span class="StringLit">&quot;bubix1_api.h&quot;</span><span class="Other">,</span> <span class="Identifier">cdecl</span><span class="Other">,</span>
     <span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
+  <dd>
+    
+    
+    
+  </dd>
+</div>
+
+</div>
+<div id="bx1GetKanaLocked-procs-all">
+  <div id="bx1GetKanaLocked,Bx1Handle">
+  <dt><pre><span class="Keyword">proc</span> <a href="#bx1GetKanaLocked%2CBx1Handle"><span class="Identifier">bx1GetKanaLocked</span></a><span class="Other">(</span><span class="Identifier">h</span><span class="Other">:</span> <a href="#Bx1Handle"><span class="Identifier">Bx1Handle</span></a><span class="Other">)</span><span class="Other">:</span> <span class="Identifier">cint</span> {.<span class="Identifier">importc</span><span class="Other">:</span> <span class="StringLit">&quot;bx1_get_kana_locked&quot;</span><span class="Other">,</span>
+    <span class="Identifier">header</span><span class="Other">:</span> <span class="StringLit">&quot;bubix1_api.h&quot;</span><span class="Other">,</span> <span class="Identifier">cdecl</span><span class="Other">,</span> <span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
   <dd>
     
     
@@ -1240,6 +1305,33 @@
   <div id="bx1IsTapeInserted,Bx1Handle">
   <dt><pre><span class="Keyword">proc</span> <a href="#bx1IsTapeInserted%2CBx1Handle"><span class="Identifier">bx1IsTapeInserted</span></a><span class="Other">(</span><span class="Identifier">h</span><span class="Other">:</span> <a href="#Bx1Handle"><span class="Identifier">Bx1Handle</span></a><span class="Other">)</span><span class="Other">:</span> <span class="Identifier">cint</span> {.<span class="Identifier">importc</span><span class="Other">:</span> <span class="StringLit">&quot;bx1_is_tape_inserted&quot;</span><span class="Other">,</span>
     <span class="Identifier">header</span><span class="Other">:</span> <span class="StringLit">&quot;bubix1_api.h&quot;</span><span class="Other">,</span> <span class="Identifier">cdecl</span><span class="Other">,</span> <span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
+  <dd>
+    
+    
+    
+  </dd>
+</div>
+
+</div>
+<div id="bx1KeyCaptureRead-procs-all">
+  <div id="bx1KeyCaptureRead,Bx1Handle,ptr.uint16,cint,ptr.cint">
+  <dt><pre><span class="Keyword">proc</span> <a href="#bx1KeyCaptureRead%2CBx1Handle%2Cptr.uint16%2Ccint%2Cptr.cint"><span class="Identifier">bx1KeyCaptureRead</span></a><span class="Other">(</span><span class="Identifier">h</span><span class="Other">:</span> <a href="#Bx1Handle"><span class="Identifier">Bx1Handle</span></a><span class="Other">;</span> <span class="Identifier">dst</span><span class="Other">:</span> <span class="Keyword">ptr</span> <span class="Identifier">uint16</span><span class="Other">;</span> <span class="Identifier">maxEntries</span><span class="Other">:</span> <span class="Identifier">cint</span><span class="Other">;</span>
+                       <span class="Identifier">dropped</span><span class="Other">:</span> <span class="Keyword">ptr</span> <span class="Identifier">cint</span><span class="Other">)</span><span class="Other">:</span> <span class="Identifier">cint</span> {.
+    <span class="Identifier">importc</span><span class="Other">:</span> <span class="StringLit">&quot;bx1_key_capture_read&quot;</span><span class="Other">,</span> <span class="Identifier">header</span><span class="Other">:</span> <span class="StringLit">&quot;bubix1_api.h&quot;</span><span class="Other">,</span> <span class="Identifier">cdecl</span><span class="Other">,</span> <span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span>
+    <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
+  <dd>
+    
+    
+    
+  </dd>
+</div>
+
+</div>
+<div id="bx1KeyCaptureStart-procs-all">
+  <div id="bx1KeyCaptureStart,Bx1Handle">
+  <dt><pre><span class="Keyword">proc</span> <a href="#bx1KeyCaptureStart%2CBx1Handle"><span class="Identifier">bx1KeyCaptureStart</span></a><span class="Other">(</span><span class="Identifier">h</span><span class="Other">:</span> <a href="#Bx1Handle"><span class="Identifier">Bx1Handle</span></a><span class="Other">)</span> {.<span class="Identifier">importc</span><span class="Other">:</span> <span class="StringLit">&quot;bx1_key_capture_start&quot;</span><span class="Other">,</span>
+                                        <span class="Identifier">header</span><span class="Other">:</span> <span class="StringLit">&quot;bubix1_api.h&quot;</span><span class="Other">,</span> <span class="Identifier">cdecl</span><span class="Other">,</span>
+                                        <span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
   <dd>
     
     
@@ -1912,7 +2004,7 @@
       <div class="twelve-columns footer">
         <span class="nim-sprite"></span>
         <br>
-        <small style="color: var(--hint);">Made with Nim. Generated: 2026-08-27 00:53:38 UTC</small>
+        <small style="color: var(--hint);">Made with Nim. Generated: 2026-08-28 01:19:15 UTC</small>
       </div>
     </div>
   </div>
