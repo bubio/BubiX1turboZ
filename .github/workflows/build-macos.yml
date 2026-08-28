@@ -36,7 +36,16 @@ jobs:
   build:
     # Apple silicon runner: the build is arm64-only for now (universal
     # binaries are future work - see docs, phase list).
-    runs-on: macos-15
+    #
+    # Pinned to the newest available image rather than an older one, because
+    # AppKit gates behaviour on the SDK the main executable was linked
+    # against (linked-on-or-after), not on LSMinimumSystemVersion. A binary
+    # linked against the macOS 15 SDK takes AppKit's compatibility path on
+    # macOS 26 and loses a few pixels off the top of the emulator picture -
+    # a defect that never appears in a local build. MACOSX_DEPLOYMENT_TARGET
+    # in scripts/build_core.sh and scripts/build_nim_app.sh keeps the
+    # deployment target at 13.5 regardless of which SDK builds it.
+    runs-on: macos-26
 
     steps:
     - uses: actions/checkout@v4
