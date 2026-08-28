@@ -36,7 +36,15 @@ jobs:
   build:
     # x86_64 only - see scripts/build_windows.sh's own comment for why
     # arm64 is not built here yet.
-    runs-on: windows-2022
+    #
+    # The image barely reaches the build: the whole toolchain - Nim,
+    # MinGW-w64 GCC, SDL2, zlib - comes from this project's own pinned
+    # fetch scripts below, so the runner supplies little more than bash.
+    # It is pinned to the newest GA image anyway, because GitHub supports
+    # at most two GA images at a time and begins deprecating the oldest
+    # once a newer one ships. Moving while the build is indifferent to the
+    # image costs nothing; waiting for the deprecation notice would not.
+    runs-on: windows-2025
 
     defaults:
       run:
