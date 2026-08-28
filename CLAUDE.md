@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## リポジトリの現状
 
-**フェーズ 7（アーカイブ・ドラッグ＆ドロップ対応）とフェーズ 9（`.app` バンドル・dmg・CI）まで完了。macOS に加えて Linux（GTK メニューバー埋め込み・AppImage/.deb/.rpm・CI）、Windows（Win32/GDI ネイティブ UI・zip・CI）も対応済み。残るのはフェーズ 8（実ゲームによる検証）とフェーズ 10（ドキュメントと 0.1.0 リリース）。** `src/`・`.nimble` とも存在し、ビルドは以下のスクリプトで行う:
+**フェーズ 7（アーカイブ・ドラッグ＆ドロップ対応）とフェーズ 9（`.app` バンドル・dmg・CI）まで完了。macOS に加えて Linux（GTK メニューバー埋め込み・AppImage/.deb/.rpm・CI）、Windows（Win32/GDI ネイティブ UI・zip・CI）も対応済み。残るのはフェーズ 8（実ゲームによる検証）とフェーズ 10（ドキュメントと 1.0.0 リリース）。** `src/`・`.nimble` とも存在し、ビルドは以下のスクリプトで行う:
 
 - `scripts/build_core.sh [vm|app|osd|bridge|all]` — 静的ライブラリ `build/libbubix1core.a`（vendored C++ コア + OSD + bridge）をビルド。macOS は clang++/arm64、Linux/Windows は g++（OS を自動判別）
 - `scripts/fetch_sdl2_framework.sh` — 公式配布の `SDL2.framework` を `build/frameworks` に取得（Homebrew の SDL は使わない。理由は `DevelopmentPlan.md` フェーズ 9。macOS 専用）

@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.1.0"
+version       = "1.0.0"
 author         = "bubio"
 description    = "Multi-platform Sharp X1 turbo Z emulator"
 license        = "GPL-2.0-or-later"
