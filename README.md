@@ -23,6 +23,9 @@ Sharp X1 turbo Zのエミュレーターです。マルチプラットフォー�
   <a href="https://github.com/bubio/BubiX1turboZ/actions/workflows/build-windows.yml">
     <img src="https://github.com/bubio/BubiX1turboZ/actions/workflows/build-windows.yml/badge.svg" alt="Windows">
   </a>
+  <a href="https://github.com/bubio/BubiX1turboZ/releases/latest">
+    <img src="https://img.shields.io/github/downloads/bubio/BubiX1turboZ/total.svg" alt="Downloads">
+  </a>
 </p>
 
 ## BubiX1turboZとは
